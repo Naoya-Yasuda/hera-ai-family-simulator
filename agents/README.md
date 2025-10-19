@@ -12,11 +12,13 @@
 # プロジェクトルートに移動
 cd /path/to/hera-ai-family-simulator
 
-# 仮想環境の作成と有効化
+# 仮想環境の作成 一度だけ
 python -m venv venv
+
+# 仮想環境有効化
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# 依存関係のインストール
+# 依存関係のインストール 一度だけ
 pip install -r requirements.txt
 ```
 
@@ -32,23 +34,38 @@ nano .env  # またはお好みのエディタ
 
 **必要な環境変数**:
 ```bash
-# Google Cloud設定
-GOOGLE_CLOUD_PROJECT=your-project-id
-GOOGLE_CLOUD_LOCATION=asia-northeast1
-GEMINI_API_KEY=your-gemini-api-key
-
-# Google Cloud認証（オプション）
-GOOGLE_APPLICATION_CREDENTIALS=path/to/service-account-key.json
+# Gemini API設定
+GEMINI_API_KEY=your-gemini-api-key-here
+GEMINI_MODEL=gemini-pro
 ```
 
 ### 3. ADK Web UIでヘーラーエージェントを起動
 
 ```bash
-# ADK Web UIを起動
+# プロジェクトルートで実行（重要！）
+cd /path/to/hera-ai-family-simulator
 adk web
 ```
 
 **アクセス**: `http://localhost:8000`
+
+## ⚠️ 重要な注意事項
+
+### 実行場所
+- **必ずプロジェクトルートで実行**: `cd /path/to/hera-ai-family-simulator`
+- **agentsディレクトリ内では実行しない**: `cd agents` ❌
+
+### 必要なファイル構造
+```
+hera-ai-family-simulator/          # ← ここでadk webを実行
+├── agents/
+│   ├── __init__.py               # ← 必要
+│   ├── root_agent.py             # ← 必要
+│   └── hera/
+│       └── adk_hera_agent.py
+├── .env                          # ← 必要
+└── requirements.txt
+```
 
 ## 🧪 動作確認手順
 
@@ -140,6 +157,26 @@ pip list | grep google-adk
 # 再インストール
 pip uninstall google-adk
 pip install google-adk
+```
+
+#### 6. root_agentが見つからないエラー
+```bash
+# エラー: "No root_agent found for 'agents'"
+
+# 解決方法1: プロジェクトルートで実行
+cd /path/to/hera-ai-family-simulator  # ← プロジェクトルート
+adk web
+
+# 解決方法2: 必要なファイルを作成
+touch agents/__init__.py
+touch agents/root_agent.py
+
+# 解決方法3: ディレクトリ構造を確認
+ls -la agents/
+# 以下のファイルが必要:
+# __init__.py
+# root_agent.py
+# hera/adk_hera_agent.py
 ```
 
 ## 📚 参考資料
