@@ -13,8 +13,6 @@ from enum import Enum
 # Google ADK imports
 from google.adk.agents.llm_agent import Agent
 
-# Google Cloud imports
-from google.cloud import aiplatform
 
 # Pydantic for data validation
 from pydantic import BaseModel, Field
@@ -52,17 +50,10 @@ class ADKHeraAgent:
 
     def __init__(
         self,
-        project_id: str,
-        location: str = "us-central1",
         gemini_api_key: str = None,
         **kwargs
     ):
-        self.project_id = project_id
-        self.location = location
         self.gemini_api_key = gemini_api_key
-
-        # Google Cloud クライアントの初期化
-        self._initialize_google_clients()
 
         # ヘーラーの人格設定
         self.persona = HeraPersona()
@@ -122,14 +113,6 @@ class ADKHeraAgent:
         # 必要に応じてツールを追加
         return []
 
-    def _initialize_google_clients(self):
-        """Google Cloud クライアントを初期化"""
-        try:
-            # AI Platform
-            aiplatform.init(project=self.project_id, location=self.location)
-
-        except Exception as e:
-            print(f"Google Cloud クライアントの初期化に失敗: {e}")
 
     async def start_session(self, session_id: str) -> str:
         """セッション開始"""
@@ -137,8 +120,8 @@ class ADKHeraAgent:
         self.user_profile = UserProfile()
         self.conversation_history = []
 
-        # ヘーラーの挨拶を生成
-        greeting = await self._generate_greeting()
+        # ヘーラーの挨拶
+        greeting = f"こんにちは！私は{self.persona.name}です。家族についてお話ししましょう。"
         await self._add_to_history("hera", greeting)
 
         return greeting
@@ -197,22 +180,6 @@ class ADKHeraAgent:
             print(f"ADKエージェント処理エラー: {e}")
             return "もう少し詳しく教えていただけますか？"
 
-    async def _generate_greeting(self) -> str:
-        """ヘーラーの挨拶を生成"""
-        try:
-            # ADKエージェントを使用して挨拶を生成
-            response = await self.agent.run(
-                message="こんにちは",
-                context={
-                    "is_greeting": True,
-                    "user_profile": self.user_profile.dict()
-                }
-            )
-
-            return response.content if hasattr(response, 'content') else str(response)
-
-        except Exception as e:
-            return f"こんにちは！私は{self.persona.name}です。家族についてお話ししましょう。"
 
     async def _extract_information(self, user_message: str) -> None:
         """ユーザーメッセージから情報を抽出"""

@@ -92,3 +92,6 @@ htmlcov/
 *.bak
 *.backup
 *.old
+
+# cursor
+.cursorrules
