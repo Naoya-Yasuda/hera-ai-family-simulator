@@ -1,0 +1,33 @@
+# Google ADK Core Dependencies
+google-adk>=0.1.0
+google-adk-agents>=0.1.0
+
+# Google Cloud Dependencies
+google-cloud-aiplatform>=1.38.0
+google-cloud-discoveryengine>=0.11.0
+google-cloud-dialogflow>=2.28.0
+google-cloud-speech>=2.21.0
+google-cloud-texttospeech>=2.14.0
+google-cloud-translate>=3.11.0
+
+# Gemini Integration
+google-generativeai>=0.3.0
+
+# Web Framework
+fastapi>=0.104.0
+uvicorn>=0.24.0
+websockets>=12.0
+
+# Data Processing
+pydantic>=2.5.0
+dataclasses-json>=0.6.3
+
+# Utilities
+python-dotenv>=1.0.0
+httpx>=0.25.0
+aiofiles>=23.2.0
+
+# Development
+pytest>=7.4.0
+black>=23.11.0
+flake8>=6.1.0
