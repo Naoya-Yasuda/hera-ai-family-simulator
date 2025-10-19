@@ -7,38 +7,17 @@ import json
 import os
 import asyncio
 from datetime import datetime
-from typing import Dict, List, Optional, Any, AsyncGenerator
-from dataclasses import dataclass, asdict
+from typing import Dict, List, Optional, Any
 from enum import Enum
 
 # Google ADK imports
-from google.adk.agents import llm_agent
-from google.adk.agents import base_agent
-from google.adk.agents import conversation
-from google.adk.agents import memory
-from google.adk.agents import tools
+from google.adk.agents.llm_agent import Agent
 
 # Google Cloud imports
 from google.cloud import aiplatform
-from google.cloud import discoveryengine
-from google.cloud import dialogflow
-from google.cloud import speech
-from google.cloud import texttospeech
-from google.cloud import translate
-
-# Gemini integration
-import google.generativeai as genai
 
 # Pydantic for data validation
 from pydantic import BaseModel, Field
-
-
-class ConversationState(Enum):
-    """会話の状態"""
-    GREETING = "greeting"
-    INFORMATION_COLLECTION = "information_collection"
-    FAMILY_GENERATION = "family_generation"
-    COMPLETED = "completed"
 
 
 class UserProfile(BaseModel):
@@ -60,7 +39,6 @@ class HeraPersona(BaseModel):
     name: str = "ヘーラー"
     role: str = "家族愛の神"
     domain: str = "結婚、家庭、貞節、妻の守護"
-    roman_name: str = "ユノー（Juno）"
     symbols: List[str] = ["孔雀", "王冠", "ザクロ"]
     personality: Dict[str, Any] = {
         "traits": ["愛情深い", "家族思い", "優しい", "知恵深い"],
@@ -69,7 +47,7 @@ class HeraPersona(BaseModel):
     }
 
 
-class ADKHeraAgent(llm_agent.LLMAgent):
+class ADKHeraAgent:
     """Google ADKベースのヘーラーエージェント"""
 
     def __init__(
@@ -92,7 +70,6 @@ class ADKHeraAgent(llm_agent.LLMAgent):
         # セッション管理
         self.current_session = None
         self.user_profile = UserProfile()
-        self.conversation_state = ConversationState.GREETING
         self.conversation_history = []
 
         # 情報収集の進捗
@@ -101,39 +78,55 @@ class ADKHeraAgent(llm_agent.LLMAgent):
             "interests", "work_style", "location", "partner_info", "children_info"
         ]
 
-        # ADKエージェントの初期化
-        super().__init__(
+        # ADKエージェントの初期化（標準的な方法）
+        self.agent = Agent(
             name="hera_agent",
             description="家族愛の神ヘーラーエージェント",
-            llm_model="gemini-pro",
+            model="gemini-2.5-pro",  # 最新のGeminiモデル
+            instruction=self._get_agent_instruction(),
+            tools=self._get_agent_tools(),
             **kwargs
         )
+
+    def _get_agent_instruction(self) -> str:
+        """エージェントの指示を取得"""
+        return f"""
+あなたは{self.persona.name}（{self.persona.role}）です。
+
+基本情報：
+- 名前: {self.persona.name}
+- 役割: {self.persona.role}
+- 領域: {self.persona.domain}
+- 象徴: {', '.join(self.persona.symbols)}
+- 性格: {self.persona.personality}
+
+あなたの役割：
+1. ユーザーから家族についての情報を自然な対話で収集する
+2. 温かみのある、親しみやすい口調で応答する
+3. 以下の情報を収集する：
+   - 年齢
+   - 収入範囲
+   - ライフスタイル
+   - 家族構成
+   - パートナー情報
+   - 子ども情報（いる場合）
+   - 趣味・興味
+   - 仕事スタイル
+   - 居住地
+
+常に愛情深く、家族思いの神として振る舞ってください。
+"""
+
+    def _get_agent_tools(self) -> List[Any]:
+        """エージェントのツールを取得"""
+        # 必要に応じてツールを追加
+        return []
 
     def _initialize_google_clients(self):
         """Google Cloud クライアントを初期化"""
         try:
             # AI Platform
             aiplatform.init(project=self.project_id, location=self.location)
-
-            # Discovery Engine（検索・推奨）
-            self.discovery_client = discoveryengine.DocumentServiceClient()
-
-            # Dialogflow（対話管理）
-            self.dialogflow_client = dialogflow.SessionsClient()
-
-            # Speech-to-Text
-            self.speech_client = speech.SpeechClient()
-
-            # Text-to-Speech
-            self.tts_client = texttospeech.TextToSpeechClient()
-
-            # Translation
-            self.translate_client = translate.TranslationServiceClient()
-
-            # Gemini
-            if self.gemini_api_key:
-                genai.configure(api_key=self.gemini_api_key)
-                self.gemini_model = genai.GenerativeModel('gemini-pro')
 
         except Exception as e:
             print(f"Google Cloud クライアントの初期化に失敗: {e}")
@@ -142,7 +135,6 @@ class ADKHeraAgent(llm_agent.LLMAgent):
         """セッション開始"""
         self.current_session = session_id
         self.user_profile = UserProfile()
-        self.conversation_state = ConversationState.GREETING
         self.conversation_history = []
 
         # セッションディレクトリを作成
@@ -156,14 +148,9 @@ class ADKHeraAgent(llm_agent.LLMAgent):
 
     async def process_message(
         self,
-        user_message: str,
-        audio_data: Optional[bytes] = None
+        user_message: str
     ) -> Dict[str, Any]:
         """ユーザーメッセージを処理"""
-
-        # 音声データがある場合はテキストに変換
-        if audio_data:
-            user_message = await self._speech_to_text(audio_data)
 
         # 会話履歴に追加
         await self._add_to_history("user", user_message)
@@ -183,15 +170,8 @@ class ADKHeraAgent(llm_agent.LLMAgent):
         # セッションデータを保存
         await self._save_session_data()
 
-        # 音声応答を生成（オプション）
-        audio_response = None
-        if audio_data:  # 音声入力があった場合のみ音声応答を生成
-            audio_response = await self._text_to_speech(response)
-
         return {
             "text_response": response,
-            "audio_response": audio_response,
-            "conversation_state": self.conversation_state.value,
             "information_progress": progress,
             "is_complete": self.is_information_complete()
         }
@@ -202,42 +182,15 @@ class ADKHeraAgent(llm_agent.LLMAgent):
         # 未収集の情報を特定
         missing_info = [key for key, collected in progress.items() if not collected]
 
-        # システムプロンプトを構築
-        system_prompt = f"""
-あなたは{self.persona.name}（{self.persona.role}）です。
-
-基本情報：
-- 名前: {self.persona.name}
-- 役割: {self.persona.role}
-- 領域: {self.persona.domain}
-- ローマ名: {self.persona.roman_name}
-- 象徴: {', '.join(self.persona.symbols)}
-- 性格: {self.persona.personality}
-
-現在の会話履歴：
-{await self._format_conversation_history()}
-
-収集済み情報：
-{await self._format_collected_info()}
-
-未収集の情報：
-{missing_info}
-
-ユーザーの最新メッセージ：{user_message}
-
-自然な対話で、まだ収集できていない情報について質問してください。
-温かみのある、親しみやすい口調で応答してください。
-"""
-
         try:
-            # ADKエージェントのprocessメソッドを使用
-            response = await self.process(
+            # ADKエージェントの正しい使用方法
+            response = await self.agent.run(
                 message=user_message,
-                system_prompt=system_prompt,
                 context={
                     "conversation_history": self.conversation_history,
                     "user_profile": self.user_profile.dict(),
-                    "missing_info": missing_info
+                    "missing_info": missing_info,
+                    "collected_info": await self._format_collected_info()
                 }
             )
 
@@ -249,35 +202,14 @@ class ADKHeraAgent(llm_agent.LLMAgent):
 
     async def _generate_greeting(self) -> str:
         """ヘーラーの挨拶を生成"""
-        greeting_prompt = f"""
-あなたは{self.persona.name}（{self.persona.role}）です。
-
-基本情報：
-- 名前: {self.persona.name}
-- 役割: {self.persona.role}
-- 領域: {self.persona.domain}
-- ローマ名: {self.persona.roman_name}
-- 象徴: {', '.join(self.persona.symbols)}
-- 性格: {self.persona.personality}
-
-ユーザーから家族についての情報を自然な対話で収集する必要があります。
-
-以下の情報を収集してください：
-- 年齢
-- 収入（ざっくりレンジでOK）
-- ライフスタイル（都会／地方、趣味、仕事のスタイルなど）
-- 家族構成
-- パートナー情報
-- 子ども情報（いる場合）
-
-温かみのある、親しみやすい口調で挨拶してください。
-"""
-
         try:
             # ADKエージェントを使用して挨拶を生成
-            response = await self.process(
+            response = await self.agent.run(
                 message="こんにちは",
-                system_prompt=greeting_prompt
+                context={
+                    "is_greeting": True,
+                    "user_profile": self.user_profile.dict()
+                }
             )
 
             return response.content if hasattr(response, 'content') else str(response)
@@ -288,36 +220,29 @@ class ADKHeraAgent(llm_agent.LLMAgent):
     async def _extract_information(self, user_message: str) -> None:
         """ユーザーメッセージから情報を抽出"""
 
-        extraction_prompt = f"""
-以下のユーザーメッセージから、ユーザー情報を抽出してください：
-{user_message}
-
-抽出すべき情報：
-- age: 年齢（数値）
-- income_range: 収入範囲（文字列）
-- lifestyle: ライフスタイル（辞書形式）
-- family_structure: 家族構成（辞書形式）
-- interests: 趣味・興味（リスト）
-- work_style: 仕事スタイル（文字列）
-- location: 居住地（文字列）
-- partner_info: パートナー情報（辞書形式）
-- children_info: 子ども情報（リスト）
-
-JSON形式で抽出結果を返してください。
-情報が不明な場合はnullを設定してください。
-"""
-
         try:
             # ADKエージェントを使用して情報抽出
-            response = await self.process(
-                message=user_message,
-                system_prompt=extraction_prompt
+            response = await self.agent.run(
+                message=f"以下のメッセージからユーザー情報を抽出してください：{user_message}",
+                context={
+                    "extract_info": True,
+                    "current_profile": self.user_profile.dict(),
+                    "required_fields": self.required_info
+                }
             )
 
-            extracted_info = json.loads(response.content if hasattr(response, 'content') else str(response))
-            await self._update_user_profile(extracted_info)
+            # レスポンスから情報を抽出
+            response_text = response.content if hasattr(response, 'content') else str(response)
 
-        except (json.JSONDecodeError, Exception) as e:
+            # JSON形式で抽出された情報をパース
+            try:
+                extracted_info = json.loads(response_text)
+                await self._update_user_profile(extracted_info)
+            except json.JSONDecodeError:
+                # フォールバック処理
+                await self._manual_extract_information(user_message)
+
+        except Exception as e:
             # フォールバック処理
             await self._manual_extract_information(user_message)
 
@@ -348,12 +273,6 @@ JSON形式で抽出結果を返してください。
             progress[info_key] = value is not None
         return progress
 
-    async def _format_conversation_history(self) -> str:
-        """会話履歴をフォーマット"""
-        history_text = ""
-        for entry in self.conversation_history[-10:]:  # 最新10件
-            history_text += f"{entry['speaker']}: {entry['message']}\n"
-        return history_text
 
     async def _format_collected_info(self) -> str:
         """収集済み情報をフォーマット"""
@@ -396,48 +315,6 @@ JSON形式で抽出結果を返してください。
         with open(f"{session_dir}/conversation_history.json", "w", encoding="utf-8") as f:
             json.dump(self.conversation_history, f, ensure_ascii=False, indent=2)
 
-    async def _speech_to_text(self, audio_data: bytes) -> str:
-        """音声をテキストに変換"""
-        try:
-            audio = speech.RecognitionAudio(content=audio_data)
-            config = speech.RecognitionConfig(
-                encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-                sample_rate_hertz=16000,
-                language_code="ja-JP"
-            )
-
-            response = self.speech_client.recognize(config=config, audio=audio)
-
-            if response.results:
-                return response.results[0].alternatives[0].transcript
-            else:
-                return ""
-        except Exception as e:
-            print(f"音声認識エラー: {e}")
-            return ""
-
-    async def _text_to_speech(self, text: str) -> bytes:
-        """テキストを音声に変換"""
-        try:
-            synthesis_input = texttospeech.SynthesisInput(text=text)
-            voice = texttospeech.VoiceSelectionParams(
-                language_code="ja-JP",
-                name="ja-JP-Wavenet-A"
-            )
-            audio_config = texttospeech.AudioConfig(
-                audio_encoding=texttospeech.AudioEncoding.MP3
-            )
-
-            response = self.tts_client.synthesize_speech(
-                input=synthesis_input,
-                voice=voice,
-                audio_config=audio_config
-            )
-
-            return response.audio_content
-        except Exception as e:
-            print(f"音声合成エラー: {e}")
-            return b""
 
     def get_user_profile(self) -> UserProfile:
         """ユーザープロファイルを取得"""
