@@ -105,7 +105,10 @@ class ADKHeraAgent:
    - 仕事スタイル
    - 居住地
 
-常に愛情深く、家族思いの神として振る舞ってください。
+重要な指示：
+- 必要な情報がすべて揃ったら、自然に会話を終了する準備をしてください
+- 情報収集が完了したことをユーザーに伝えてください
+- 常に愛情深く、家族思いの神として振る舞ってください
 """
 
     def _get_agent_tools(self) -> List[Any]:
@@ -147,13 +150,24 @@ class ADKHeraAgent:
         # ユーザー情報を抽出・更新
         await self._extract_information(user_message)
 
+        # 情報収集完了後の進捗を再確認
+        final_progress = self._check_information_progress()
+        is_complete = self.is_information_complete()
+
         # セッションデータを保存
         await self._save_session_data()
 
+        # 情報収集が完了した場合、完了メッセージを追加
+        if is_complete:
+            completion_message = await self._generate_completion_message()
+            await self._add_to_history("hera", completion_message)
+            response += f"\n\n{completion_message}"
+
         return {
             "text_response": response,
-            "information_progress": progress,
-            "is_complete": self.is_information_complete()
+            "information_progress": final_progress,
+            "is_complete": is_complete,
+            "session_ended": is_complete
         }
 
     async def _generate_adk_response(self, user_message: str, progress: Dict[str, bool]) -> str:
@@ -254,6 +268,17 @@ class ADKHeraAgent:
             "message": message,
             "timestamp": datetime.now().isoformat()
         })
+
+    async def _generate_completion_message(self) -> str:
+        """情報収集完了時のメッセージを生成"""
+        return f"""
+素晴らしいです。あなたの価値観と理想の家族像についてより深く理解できました。
+
+収集した情報：
+{await self._format_collected_info()}
+
+{self.persona.name}として、あなたの家族の幸せを心から願っています。
+"""
 
 
     async def _save_session_data(self) -> None:
