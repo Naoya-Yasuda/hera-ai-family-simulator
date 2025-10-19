@@ -70,7 +70,7 @@ media/
 static/media/
 
 # 一時ファイル
-tmp/
+# tmp/  # プロジェクト内のtmpディレクトリは管理対象
 temp/
 .tmp/
 

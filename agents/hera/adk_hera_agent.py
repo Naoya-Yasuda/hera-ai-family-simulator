@@ -137,9 +137,6 @@ class ADKHeraAgent:
         self.user_profile = UserProfile()
         self.conversation_history = []
 
-        # セッションディレクトリを作成
-        await self._create_session_directory()
-
         # ヘーラーの挨拶を生成
         greeting = await self._generate_greeting()
         await self._add_to_history("hera", greeting)
@@ -291,21 +288,16 @@ class ADKHeraAgent:
             "timestamp": datetime.now().isoformat()
         })
 
-    async def _create_session_directory(self) -> None:
-        """セッションディレクトリを作成"""
-        session_dir = f"/tmp/user_sessions/{self.current_session}"
-        os.makedirs(session_dir, exist_ok=True)
-        os.makedirs(f"{session_dir}/generated_content", exist_ok=True)
-        os.makedirs(f"{session_dir}/generated_content/stories", exist_ok=True)
-        os.makedirs(f"{session_dir}/generated_content/images", exist_ok=True)
-        os.makedirs(f"{session_dir}/generated_content/videos", exist_ok=True)
 
     async def _save_session_data(self) -> None:
         """セッションデータを保存"""
         if not self.current_session:
             return
 
-        session_dir = f"/tmp/user_sessions/{self.current_session}"
+        # プロジェクトルート内のtmpディレクトリを使用
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        session_dir = os.path.join(project_root, "tmp", "user_sessions", self.current_session)
+        os.makedirs(session_dir, exist_ok=True)
 
         # ユーザープロファイルを保存
         with open(f"{session_dir}/user_profile.json", "w", encoding="utf-8") as f:
@@ -334,12 +326,14 @@ class ADKHeraAgent:
         await self._save_session_data()
 
         # セッション情報を返す
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        session_dir = os.path.join(project_root, "tmp", "user_sessions", self.current_session)
         session_info = {
             "session_id": self.current_session,
             "user_profile": self.user_profile.dict(),
             "conversation_count": len(self.conversation_history),
             "information_complete": self.is_information_complete(),
-            "session_dir": f"/tmp/user_sessions/{self.current_session}"
+            "session_dir": session_dir
         }
 
         return session_info
