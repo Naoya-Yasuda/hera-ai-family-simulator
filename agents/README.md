@@ -44,6 +44,8 @@ GEMINI_MODEL=gemini-pro
 ```bash
 # プロジェクトルートで実行（重要！）
 cd /path/to/hera-ai-family-simulator
+source venv/bin/activate
+export PYTHONPATH="/path/to/hera-ai-family-simulator"
 adk web
 ```
 
@@ -86,8 +88,6 @@ hera-ai-family-simulator/          # ← ここでadk webを実行
 
 ### 動作確認のポイント
 
-- **音声入力**: マイクボタンで音声入力が可能
-- **音声出力**: ヘーラーエージェントの音声応答
 - **自然な対話**: 温かみのある口調での応答
 - **文脈理解**: 会話の流れを理解した応答
 - **情報抽出**: 対話内容からの自動情報抽出
@@ -110,16 +110,7 @@ hera-ai-family-simulator/          # ← ここでadk webを実行
 
 ### よくある問題と解決方法
 
-#### 1. Google Cloud認証エラー
-```bash
-# サービスアカウントキーを設定
-export GOOGLE_APPLICATION_CREDENTIALS="path/to/service-account-key.json"
-
-# または、gcloud CLIで認証
-gcloud auth application-default login
-```
-
-#### 2. Gemini API キーエラー
+#### 1. Gemini API キーエラー
 ```bash
 # .envファイルでGEMINI_API_KEYを確認
 echo $GEMINI_API_KEY
@@ -128,7 +119,7 @@ echo $GEMINI_API_KEY
 export GEMINI_API_KEY="your-actual-api-key"
 ```
 
-#### 3. ポートが既に使用されている
+#### 2. ポートが既に使用されている
 ```bash
 # 使用中のポートを確認
 lsof -i :8000
@@ -136,11 +127,9 @@ lsof -i :8000
 # プロセスを終了
 kill -9 <PID>
 
-# または別のポートを使用
-uvicorn app:app --port 8001
 ```
 
-#### 4. 依存関係のエラー
+#### 3. 依存関係のエラー
 ```bash
 # 仮想環境を再作成
 rm -rf venv
@@ -149,7 +138,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-#### 5. ADK Web UIが起動しない
+#### 4. ADK Web UIが起動しない
 ```bash
 # ADKが正しくインストールされているか確認
 pip list | grep google-adk
@@ -159,7 +148,7 @@ pip uninstall google-adk
 pip install google-adk
 ```
 
-#### 6. root_agentが見つからないエラー
+#### 5. root_agentが見つからないエラー
 ```bash
 # エラー: "No root_agent found for 'agents'"
 
@@ -187,8 +176,6 @@ ls -la agents/
 
 ### Google Cloud サービス
 - [Google Cloud AI Platform](https://cloud.google.com/ai-platform)
-- [Google Cloud Speech-to-Text](https://cloud.google.com/speech-to-text)
-- [Google Cloud Text-to-Speech](https://cloud.google.com/text-to-speech)
 
 ### Gemini API
 - [Gemini API ドキュメント](https://ai.google.dev/docs)
@@ -198,8 +185,7 @@ ls -la agents/
 
 1. **エージェントのカスタマイズ**: 人格設定や指示の調整
 2. **ツールの追加**: カスタムツールの実装
-3. **音声品質の向上**: 音声認識・合成の最適化
-4. **統合テスト**: フロントエンドとの統合テスト
+3. **統合テスト**: フロントエンドとの統合テスト
 
 ---
 
