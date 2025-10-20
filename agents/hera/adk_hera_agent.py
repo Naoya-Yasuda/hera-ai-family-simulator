@@ -164,36 +164,14 @@ class ADKHeraAgent:
         self,
         user_message: str
     ) -> Dict[str, Any]:
-        """ユーザーメッセージを処理"""
+        """ユーザーメッセージを処理（ADKの標準フローを無効化）"""
+        print(f"🚫 ADK標準フローをスキップ: {user_message}")
 
-        # 会話履歴に追加
-        await self._add_to_history("user", user_message)
-
-        # ADKエージェントを使用して応答を生成
-        response = await self._generate_adk_response(user_message, {})
-
-        # 応答を履歴に追加
-        await self._add_to_history("hera", response)
-
-        # ユーザー情報を抽出・更新
-        await self._extract_information(user_message)
-
-        # LLMによる完了判定
-        is_complete = await self._check_completion_with_llm(user_message)
-
-        # セッションデータを保存
-        await self._save_session_data()
-
-        # 情報収集が完了した場合、完了メッセージを追加
-        if is_complete:
-            completion_message = await self._generate_completion_message()
-            await self._add_to_history("hera", completion_message)
-            response += f"\n\n{completion_message}"
-
+        # カスタムツールが処理するため、ここでは何もしない
         return {
-            "text_response": response,
-            "is_complete": is_complete,
-            "session_ended": is_complete
+            "text_response": "カスタムツールで処理中...",
+            "is_complete": False,
+            "session_ended": False
         }
 
     async def _generate_adk_response(self, user_message: str, progress: Dict[str, bool]) -> str:
@@ -219,30 +197,59 @@ class ADKHeraAgent:
 
     async def _extract_information(self, user_message: str) -> None:
         """ユーザーメッセージから情報を抽出"""
+        print(f"🔍 情報抽出開始: {user_message}")
 
         try:
-            # ADKエージェントを使用して情報抽出
-            response = await self.agent.run(
-                message=f"以下のメッセージからユーザー情報を抽出してください：{user_message}",
-                context={
-                    "extract_info": True,
-                    "current_profile": self.user_profile.dict(),
-                    "required_fields": self.required_info
-                }
-            )
+            # 直接Gemini APIを使用して情報抽出
+            from google.generativeai import GenerativeModel
+            model = GenerativeModel('gemini-2.5-pro')
 
-            # レスポンスから情報を抽出
-            response_text = response.content if hasattr(response, 'content') else str(response)
+            prompt = f"""
+以下のユーザーメッセージから情報を抽出し、JSON形式で返してください：
+
+ユーザーメッセージ: {user_message}
+
+現在のプロファイル: {self.user_profile.dict()}
+
+以下のフィールドから該当する情報を抽出してください：
+- age: 年齢（数値）
+- income_range: 収入範囲（文字列）
+- lifestyle: ライフスタイル情報（辞書）
+- family_structure: 家族構成（辞書）
+- interests: 趣味・興味（配列）
+- work_style: 仕事スタイル（文字列）
+- location: 居住地（文字列）
+- partner_info: パートナー情報（辞書）
+- children_info: 子ども情報（配列）
+
+抽出できた情報のみをJSON形式で返してください。例：
+{{"age": 38, "income_range": "500万", "location": "足立区", "work_style": "エンジニア"}}
+"""
+
+            response = model.generate_content(prompt)
+            response_text = response.text if hasattr(response, 'text') else str(response)
+
+            print(f"🤖 抽出レスポンス: {response_text}")
 
             # JSON形式で抽出された情報をパース
             try:
-                extracted_info = json.loads(response_text)
-                await self._update_user_profile(extracted_info)
-            except json.JSONDecodeError:
-                # フォールバック処理
+                # JSON部分を抽出
+                import re
+                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                    extracted_info = json.loads(json_str)
+                    print(f"📝 抽出された情報: {extracted_info}")
+                    await self._update_user_profile(extracted_info)
+                else:
+                    print("⚠️ JSON形式が見つかりません")
+                    await self._manual_extract_information(user_message)
+            except json.JSONDecodeError as e:
+                print(f"⚠️ JSON解析エラー: {e}")
                 await self._manual_extract_information(user_message)
 
         except Exception as e:
+            print(f"❌ 情報抽出エラー: {e}")
             # フォールバック処理
             await self._manual_extract_information(user_message)
 
@@ -330,6 +337,54 @@ class ADKHeraAgent:
             "message": message,
             "timestamp": datetime.now().isoformat()
         })
+
+    async def _generate_hera_response(self, user_message: str) -> str:
+        """ヘーラーエージェントの応答を生成"""
+        try:
+            from google.generativeai import GenerativeModel
+            model = GenerativeModel('gemini-2.5-pro')
+
+            prompt = f"""
+あなたは{self.persona.name}（{self.persona.role}）です。
+
+基本情報：
+- 名前: {self.persona.name}
+- 役割: {self.persona.role}
+- 領域: {self.persona.domain}
+- 象徴: {', '.join(self.persona.symbols)}
+- 性格: {self.persona.personality}
+
+現在のユーザープロファイル：
+{await self._format_collected_info()}
+
+会話履歴：
+{self.conversation_history[-3:] if len(self.conversation_history) > 3 else self.conversation_history}
+
+ユーザーの最新メッセージ：
+{user_message}
+
+あなたの役割：
+1. 温かみのある、親しみやすい口調で応答する
+2. 家族についての情報を自然な対話で収集する
+3. 以下の情報を収集する：
+   - 年齢、収入範囲、ライフスタイル、家族構成
+   - パートナー情報、子ども情報、趣味・興味
+   - 仕事スタイル、居住地
+
+重要な指示：
+- 必要な情報が十分に収集されたと判断したら、「もう十分」「これで十分」などと明確に表現してください
+- 常に愛情深く、家族思いの神として振る舞ってください
+- ユーザーの話を聞いて、適切な質問をしてください
+
+ユーザーのメッセージに対して、{self.persona.name}として自然で温かい応答をしてください。
+"""
+
+            response = model.generate_content(prompt)
+            return response.text if hasattr(response, 'text') else str(response)
+
+        except Exception as e:
+            print(f"❌ ヘーラー応答生成エラー: {e}")
+            return "もう少し詳しく教えていただけますか？"
 
     async def _generate_completion_message(self) -> str:
         """情報収集完了時のメッセージを生成"""
@@ -433,16 +488,26 @@ class ADKHeraAgent:
                 import uuid
                 self.current_session = str(uuid.uuid4())
                 print(f"🆔 新規セッションID生成: {self.current_session}")
+
+            # 会話履歴にユーザーメッセージを追加
+            await self._add_to_history("user", user_message)
+
             # ユーザー情報を抽出
             await self._extract_information(user_message)
+
+            # エージェントの応答を生成
+            response = await self._generate_hera_response(user_message)
+
+            # エージェントの応答を履歴に追加
+            await self._add_to_history("hera", response)
 
             # セッションデータを保存
             await self._save_session_data()
 
-            return f"ユーザー情報を抽出・保存しました: {await self._format_collected_info()}"
+            return response
         except Exception as e:
             print(f"❌ 情報抽出エラー: {e}")
-            return f"情報抽出中にエラーが発生しました: {str(e)}"
+            return f"申し訳ございません。エラーが発生しました: {str(e)}"
 
     async def _check_completion_tool(self, user_message: str) -> str:
         """セッション完了判定ツール"""
