@@ -30,8 +30,9 @@ class UserProfile(BaseModel):
     location: Optional[str] = Field(None, description="居住地")
     partner_info: Optional[Dict[str, Any]] = Field(None, description="パートナー情報")
     children_info: Optional[List[Dict[str, Any]]] = Field(None, description="子ども情報")
-    user_photos: Optional[List[str]] = Field(None, description="ユーザーの写真パス")
+    user_photos: List[str] = Field(default_factory=list, description="ユーザーの写真パス（必須）")
     partner_photos: Optional[List[str]] = Field(None, description="配偶者の写真パス")
+    partner_face_description: Optional[str] = Field(None, description="配偶者の顔の方向性・特徴の文章記述（写真がない場合必須）")
     created_at: Optional[str] = Field(None, description="作成日時")
 
 
@@ -72,7 +73,7 @@ class ADKHeraAgent:
         self.required_info = [
             "age", "gender", "income_range", "lifestyle", "family_structure",
             "interests", "work_style", "future_career", "location",
-            "partner_info", "children_info", "user_photos", "partner_photos"
+            "partner_info", "children_info", "user_photos", "partner_photos", "partner_face_description"
         ]
 
         # ADKエージェントの初期化（標準的な方法）
@@ -106,16 +107,23 @@ class ADKHeraAgent:
    - 家族構成、パートナー情報、子ども情報
    - 趣味・興味、現在の仕事スタイル、将来のキャリア
    - 居住地
-   - 写真（本人や配偶者の画像）
+   - ユーザーの写真（必須）
+   - 配偶者の写真または顔の特徴の文章記述（どちらか必須）
 
 重要な指示：
-- 写真については、ユーザーが提供した場合のみ言及してください
+- ユーザーの写真は必須です。提供されない場合は明確に要求してください
+- 配偶者の写真が提供できない場合は、顔の方向性や特徴を文章で記述してもらってください
 - 将来のキャリアについては、現在の仕事と区別して聞いてください
 - 必要な情報が十分に収集されたと判断したら、「もう十分」「これで十分」などと明確に表現してください
 - 常に愛情深く、家族思いの神として振る舞ってください
 
+利用方針（厳守）：
+- 必ず最初にextract_user_infoを呼び出し、ツールの戻り値をそのまま最終応答として返すこと
+- ツール実行前に通常のテキスト応答を出力してはならない
+- check_session_completionは必要時のみ呼び出す
+
 利用可能なツール：
-- extract_user_info: ユーザー情報を抽出・保存
+- extract_user_info: ユーザー情報を抽出・保存（最初に必ず呼ぶ／戻り値=最終応答）
 - check_session_completion: 情報収集完了を判定
 
 これらのツールを適切に使用して、ユーザー情報の収集と管理を行ってください。
@@ -164,11 +172,8 @@ class ADKHeraAgent:
             os.makedirs(photos_dir)
             print(f"📁 セッションディレクトリを作成しました: {session_dir}")
 
-        # ヘーラーの挨拶
-        greeting = f"こんにちは！私は{self.persona.name}です。家族についてお話ししましょう。"
-        await self._add_to_history("hera", greeting)
-
-        return greeting
+        # 初手の通常挨拶は表示順の混乱を避けるため無効化
+        return ""
 
 
     async def _generate_adk_response(self, user_message: str, progress: Dict[str, bool]) -> str:
@@ -220,8 +225,9 @@ class ADKHeraAgent:
 - location: 居住地（文字列）
 - partner_info: パートナー情報（辞書）
 - children_info: 子ども情報（配列）
-- user_photos: ユーザーの写真パス（配列）
+- user_photos: ユーザーの写真パス（配列、必須）
 - partner_photos: 配偶者の写真パス（配列）
+- partner_face_description: 配偶者の顔の方向性・特徴の文章記述（写真がない場合必須）
 
 抽出できた情報のみをJSON形式で返してください。例：
 {{"age": 38, "gender": "男性", "income_range": "500万", "location": "足立区", "work_style": "エンジニア", "future_career": "フリーランス"}}
@@ -268,7 +274,16 @@ class ADKHeraAgent:
         progress = {}
         for info_key in self.required_info:
             value = getattr(self.user_profile, info_key, None)
-            progress[info_key] = value is not None
+            if info_key == "user_photos":
+                # ユーザーの写真は必須（空のリストは不可）
+                progress[info_key] = value is not None and len(value) > 0
+            elif info_key in ["partner_photos", "partner_face_description"]:
+                # 配偶者の写真または顔の特徴の文章記述のどちらかが必須
+                partner_photos = getattr(self.user_profile, "partner_photos", None)
+                partner_face_description = getattr(self.user_profile, "partner_face_description", None)
+                progress[info_key] = (partner_photos is not None and len(partner_photos) > 0) or (partner_face_description is not None and partner_face_description.strip() != "")
+            else:
+                progress[info_key] = value is not None
         return progress
 
     async def _check_completion_with_llm(self, user_message: str) -> bool:
@@ -293,6 +308,8 @@ class ADKHeraAgent:
 必要な情報が十分に収集されたかどうかを判断してください。
 以下の条件を考慮してください：
 - 年齢、収入、家族構成、パートナー情報、子ども情報、趣味、仕事、居住地
+- ユーザーの写真（必須）
+- 配偶者の写真または顔の特徴の文章記述（どちらか必須）
 - 情報が不足していても、ユーザーが「もう十分」「これで十分」などと言っている場合は完了とする
 - エージェントが「もう十分」と判断している場合は完了とする
 
@@ -361,6 +378,8 @@ class ADKHeraAgent:
    - 年齢、収入範囲、ライフスタイル、家族構成
    - パートナー情報、子ども情報、趣味・興味
    - 仕事スタイル、居住地
+   - ユーザーの写真（必須）
+   - 配偶者の写真または顔の特徴の文章記述（どちらか必須）
 
 重要な指示：
 - 必要な情報が十分に収集されたと判断したら、「もう十分」「これで十分」などと明確に表現してください
@@ -464,6 +483,22 @@ class ADKHeraAgent:
         print(f"✅ セッションデータ保存完了: {session_dir}")
 
 
+    async def _save_conversation_history(self) -> None:
+        """会話履歴のみを保存（毎ターン呼び出し）"""
+        if not self.current_session:
+            print("⚠️ セッションID未設定のため履歴保存をスキップ")
+            return
+
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        session_dir = os.path.join(project_root, "tmp", "user_sessions", self.current_session)
+        if not os.path.exists(session_dir):
+            print(f"⚠️ セッションディレクトリが存在しません: {session_dir}")
+            return
+
+        with open(f"{session_dir}/conversation_history.json", "w", encoding="utf-8") as f:
+            json.dump(self.conversation_history, f, ensure_ascii=False, indent=2)
+
+
     def get_user_profile(self) -> UserProfile:
         """ユーザープロファイルを取得"""
         return self.user_profile
@@ -531,17 +566,21 @@ class ADKHeraAgent:
             print("❌ ADKセッションIDが取得できません")
             return "セッションIDが取得できませんでした"
 
-        if not self.current_session:
+        # UIのセッションIDに常時同期（異なる場合は更新）
+        if self.current_session != resolved_session_id:
             self.current_session = resolved_session_id
-            await self.start_session(self.current_session)
+            # ディレクトリ未作成時のみ開始処理
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            session_dir = os.path.join(project_root, "tmp", "user_sessions", self.current_session)
+            if not os.path.exists(session_dir):
+                await self.start_session(self.current_session)
 
-        # メッセージ処理
-        result = await self.process_message(message)
+        # ツールを直接呼び出して応答を生成（標準フロー無効化のため）
+        response = await self._extract_user_info_tool(message)
 
-        print(f"📤 レスポンス: {result.get('text_response', '')}")
-        print(f"✅ 完了: {result.get('is_complete', False)}")
+        print(f"📤 レスポンス: {response}")
 
-        return result.get('text_response', '')
+        return response
 
     # ADKツール用のメソッド
     async def _extract_user_info_tool(self, user_message: str) -> str:
@@ -549,18 +588,14 @@ class ADKHeraAgent:
         print(f"🔍 情報抽出ツールが呼び出されました: {user_message}")
 
         try:
-            # 常に最新のADKセッションIDを取得して更新
-            latest_sid = await self._get_latest_adk_session_id(retries=3, timeout_sec=10.0)
-            if not latest_sid:
-                print("❌ ADKセッションIDが取得できません（ツール側）")
-                return "セッションIDが取得できませんでした"
-
-            # セッションIDが変更された場合は更新
-            if latest_sid != self.current_session:
+            # runで設定されていない場合はフォールバックで最新セッションIDを取得
+            if not self.current_session:
+                latest_sid = await self._get_latest_adk_session_id(retries=3, timeout_sec=10.0)
+                if not latest_sid:
+                    print("❌ ADKセッションIDが取得できません（ツール側フォールバック）")
+                    return "セッションIDが取得できませんでした"
                 self.current_session = latest_sid
-                print(f"🆔 セッションID更新: {self.current_session}")
-            else:
-                print(f"🆔 セッションID維持: {self.current_session}")
+                print(f"🆔 ツール側でセッションID設定: {self.current_session}")
 
             # セッション開始（ディレクトリ未作成時）
             project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
@@ -570,6 +605,8 @@ class ADKHeraAgent:
 
             # 会話履歴にユーザーメッセージを追加
             await self._add_to_history("user", user_message)
+            # 会話履歴のみ即時保存
+            await self._save_conversation_history()
 
             # ユーザー情報を抽出
             await self._extract_information(user_message)
@@ -578,10 +615,10 @@ class ADKHeraAgent:
             response = await self._generate_hera_response(user_message)
             # エージェントの応答を履歴に追加
             await self._add_to_history("hera", response)
+            # 会話履歴のみ即時保存
+            await self._save_conversation_history()
 
-            # セッションデータを保存
-            await self._save_session_data()
-
+            # 毎ターンの保存は行わず、メモリにのみ保持
             return response
         except Exception as e:
             print(f"❌ 情報抽出エラー: {e}")
@@ -592,11 +629,27 @@ class ADKHeraAgent:
         print(f"🔍 完了判定ツールが呼び出されました: {user_message}")
 
         try:
+            # セッションIDのフォールバック（runを経由しない呼出し対策）
+            if not self.current_session:
+                latest_sid = await self._get_latest_adk_session_id(retries=3, timeout_sec=10.0)
+                if not latest_sid:
+                    print("❌ ADKセッションIDが取得できません（完了判定フォールバック）")
+                    return "INCOMPLETE"
+                self.current_session = latest_sid
+                print(f"🆔 完了判定側でセッションID設定: {self.current_session}")
+                # ディレクトリ未作成時のみ開始
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+                session_dir = os.path.join(project_root, "tmp", "user_sessions", self.current_session)
+                if not os.path.exists(session_dir):
+                    await self.start_session(self.current_session)
+
             # LLMによる完了判定
             is_complete = await self._check_completion_with_llm(user_message)
 
             if is_complete:
                 print("✅ セッション完了と判定されました")
+                # 完了時のみディスク保存（プロフィール・履歴）
+                await self._save_session_data()
                 return "COMPLETED"
             else:
                 print("⏳ セッション継続と判定されました")
