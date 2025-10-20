@@ -118,8 +118,9 @@ class ADKHeraAgent:
 - 常に愛情深く、家族思いの神として振る舞ってください
 
 利用方針（厳守）：
-- 必ず最初にextract_user_infoを呼び出し、ツールの戻り値をそのまま最終応答として返すこと
+- 必ず最初にextract_user_infoを呼び出すこと
 - ツール実行前に通常のテキスト応答を出力してはならない
+- extract_user_infoのfunction_callを出力した場合は、その直後に必ず最終テキストメッセージを返し、ツールから受け取った文字列をそのまま提示すること
 - check_session_completionは必要時のみ呼び出す
 
 利用可能なツール：
@@ -250,7 +251,6 @@ class ADKHeraAgent:
                     await self._update_user_profile(extracted_info)
                 else:
                     print("⚠️ JSON形式が見つかりません")
-                    await self._manual_extract_information(user_message)
             except json.JSONDecodeError as e:
                 # 手動抽出は行わず、次発話でのLLM抽出に委ねる
                 print(f"⚠️ JSON解析エラー（手動抽出はスキップ）: {e}")
@@ -578,6 +578,9 @@ class ADKHeraAgent:
         # ツールを直接呼び出して応答を生成（標準フロー無効化のため）
         response = await self._extract_user_info_tool(message)
 
+        if not response or not response.strip():
+            response = "お話を伺いました。続きもぜひ教えてください。"
+
         print(f"📤 レスポンス: {response}")
 
         return response
@@ -613,6 +616,9 @@ class ADKHeraAgent:
 
             # エージェントの応答を生成
             response = await self._generate_hera_response(user_message)
+            if not response or not response.strip():
+                response = "お話を伺いました。続きもぜひ教えてください。"
+
             # エージェントの応答を履歴に追加
             await self._add_to_history("hera", response)
             # 会話履歴のみ即時保存
@@ -629,6 +635,11 @@ class ADKHeraAgent:
         print(f"🔍 完了判定ツールが呼び出されました: {user_message}")
 
         try:
+            # 会話履歴にユーザーメッセージを追加（完了判定経路でも欠落させない）
+            await self._add_to_history("user", user_message)
+            # 履歴のみ即時保存
+            await self._save_conversation_history()
+
             # セッションIDのフォールバック（runを経由しない呼出し対策）
             if not self.current_session:
                 latest_sid = await self._get_latest_adk_session_id(retries=3, timeout_sec=10.0)
