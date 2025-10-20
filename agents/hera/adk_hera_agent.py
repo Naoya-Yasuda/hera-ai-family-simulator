@@ -20,14 +20,18 @@ from pydantic import BaseModel, Field
 class UserProfile(BaseModel):
     """ユーザープロファイル（Pydanticモデル）"""
     age: Optional[int] = Field(None, description="ユーザーの年齢")
+    gender: Optional[str] = Field(None, description="性別")
     income_range: Optional[str] = Field(None, description="収入範囲")
     lifestyle: Optional[Dict[str, Any]] = Field(None, description="ライフスタイル情報")
     family_structure: Optional[Dict[str, Any]] = Field(None, description="家族構成")
     interests: Optional[List[str]] = Field(None, description="趣味・興味")
-    work_style: Optional[str] = Field(None, description="仕事スタイル")
+    work_style: Optional[str] = Field(None, description="現在の仕事スタイル")
+    future_career: Optional[str] = Field(None, description="将来の仕事・キャリア")
     location: Optional[str] = Field(None, description="居住地")
     partner_info: Optional[Dict[str, Any]] = Field(None, description="パートナー情報")
     children_info: Optional[List[Dict[str, Any]]] = Field(None, description="子ども情報")
+    user_photos: Optional[List[str]] = Field(None, description="ユーザーの写真パス")
+    partner_photos: Optional[List[str]] = Field(None, description="配偶者の写真パス")
     created_at: Optional[str] = Field(None, description="作成日時")
 
 
@@ -53,6 +57,8 @@ class ADKHeraAgent:
         **kwargs
     ):
         self.gemini_api_key = gemini_api_key
+        # ADK WebサーバーのベースURL（Dev UIが動いているURL）
+        self.adk_base_url = os.getenv("ADK_BASE_URL", "http://127.0.0.1:8000")
 
         # ヘーラーの人格設定
         self.persona = HeraPersona()
@@ -64,8 +70,9 @@ class ADKHeraAgent:
 
         # 情報収集の進捗
         self.required_info = [
-            "age", "income_range", "lifestyle", "family_structure",
-            "interests", "work_style", "location", "partner_info", "children_info"
+            "age", "gender", "income_range", "lifestyle", "family_structure",
+            "interests", "work_style", "future_career", "location",
+            "partner_info", "children_info", "user_photos", "partner_photos"
         ]
 
         # ADKエージェントの初期化（標準的な方法）
@@ -94,25 +101,22 @@ class ADKHeraAgent:
 1. ユーザーから家族についての情報を自然な対話で収集する
 2. 温かみのある、親しみやすい口調で応答する
 3. 以下の情報を収集する：
-   - 年齢
-   - 収入範囲
-   - ライフスタイル
-   - 家族構成
-   - パートナー情報
-   - 子ども情報（いる場合）
-   - 趣味・興味
-   - 仕事スタイル
+   - 年齢、性別
+   - 収入範囲、ライフスタイル
+   - 家族構成、パートナー情報、子ども情報
+   - 趣味・興味、現在の仕事スタイル、将来のキャリア
    - 居住地
+   - 写真（本人や配偶者の画像）
 
 重要な指示：
+- 写真については、ユーザーが提供した場合のみ言及してください
+- 将来のキャリアについては、現在の仕事と区別して聞いてください
 - 必要な情報が十分に収集されたと判断したら、「もう十分」「これで十分」などと明確に表現してください
-- 情報収集が完了したと判断したら、自然に会話を終了する準備をしてください
 - 常に愛情深く、家族思いの神として振る舞ってください
 
 利用可能なツール：
-- extract_user_information: ユーザー情報を抽出・保存
+- extract_user_info: ユーザー情報を抽出・保存
 - check_session_completion: 情報収集完了を判定
-- save_session_data: セッションデータを保存
 
 これらのツールを適切に使用して、ユーザー情報の収集と管理を行ってください。
 """
@@ -138,12 +142,7 @@ class ADKHeraAgent:
         )
         tools.append(completion_tool)
 
-        # セッションデータ保存ツール
-        save_tool = FunctionTool(
-            func=self._save_session_tool,
-            require_confirmation=False
-        )
-        tools.append(save_tool)
+        # セッションデータ保存ツールは削除（_extract_user_info_toolで既に保存済み）
 
         return tools
 
@@ -154,25 +153,23 @@ class ADKHeraAgent:
         self.user_profile = UserProfile()
         self.conversation_history = []
 
+        # セッション用ディレクトリを事前に作成
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        session_dir = os.path.join(project_root, "tmp", "user_sessions", session_id)
+        photos_dir = os.path.join(session_dir, "photos")
+
+        # ディレクトリが存在しない場合のみ作成
+        if not os.path.exists(session_dir):
+            os.makedirs(session_dir)
+            os.makedirs(photos_dir)
+            print(f"📁 セッションディレクトリを作成しました: {session_dir}")
+
         # ヘーラーの挨拶
         greeting = f"こんにちは！私は{self.persona.name}です。家族についてお話ししましょう。"
         await self._add_to_history("hera", greeting)
 
         return greeting
 
-    async def process_message(
-        self,
-        user_message: str
-    ) -> Dict[str, Any]:
-        """ユーザーメッセージを処理（ADKの標準フローを無効化）"""
-        print(f"🚫 ADK標準フローをスキップ: {user_message}")
-
-        # カスタムツールが処理するため、ここでは何もしない
-        return {
-            "text_response": "カスタムツールで処理中...",
-            "is_complete": False,
-            "session_ended": False
-        }
 
     async def _generate_adk_response(self, user_message: str, progress: Dict[str, bool]) -> str:
         """ADKエージェントを使用して応答を生成"""
@@ -213,17 +210,21 @@ class ADKHeraAgent:
 
 以下のフィールドから該当する情報を抽出してください：
 - age: 年齢（数値）
+- gender: 性別（文字列: "男性", "女性", "その他"）
 - income_range: 収入範囲（文字列）
 - lifestyle: ライフスタイル情報（辞書）
 - family_structure: 家族構成（辞書）
 - interests: 趣味・興味（配列）
-- work_style: 仕事スタイル（文字列）
+- work_style: 現在の仕事スタイル（文字列）
+- future_career: 将来の仕事・キャリア（文字列）
 - location: 居住地（文字列）
 - partner_info: パートナー情報（辞書）
 - children_info: 子ども情報（配列）
+- user_photos: ユーザーの写真パス（配列）
+- partner_photos: 配偶者の写真パス（配列）
 
 抽出できた情報のみをJSON形式で返してください。例：
-{{"age": 38, "income_range": "500万", "location": "足立区", "work_style": "エンジニア"}}
+{{"age": 38, "gender": "男性", "income_range": "500万", "location": "足立区", "work_style": "エンジニア", "future_career": "フリーランス"}}
 """
 
             response = model.generate_content(prompt)
@@ -245,13 +246,11 @@ class ADKHeraAgent:
                     print("⚠️ JSON形式が見つかりません")
                     await self._manual_extract_information(user_message)
             except json.JSONDecodeError as e:
-                print(f"⚠️ JSON解析エラー: {e}")
-                await self._manual_extract_information(user_message)
+                # 手動抽出は行わず、次発話でのLLM抽出に委ねる
+                print(f"⚠️ JSON解析エラー（手動抽出はスキップ）: {e}")
 
         except Exception as e:
-            print(f"❌ 情報抽出エラー: {e}")
-            # フォールバック処理
-            await self._manual_extract_information(user_message)
+            print(f"❌ 情報抽出エラー（手動抽出はスキップ）: {e}")
 
     async def _update_user_profile(self, extracted_info: Dict[str, Any]) -> None:
         """ユーザープロファイルを更新"""
@@ -263,14 +262,6 @@ class ADKHeraAgent:
         if self.user_profile.created_at is None:
             self.user_profile.created_at = datetime.now().isoformat()
 
-    async def _manual_extract_information(self, user_message: str) -> None:
-        """手動で情報を抽出（フォールバック）"""
-        import re
-
-        # 年齢の抽出
-        age_match = re.search(r'(\d+)歳', user_message)
-        if age_match and self.user_profile.age is None:
-            self.user_profile.age = int(age_match.group(1))
 
     def _check_information_progress(self) -> Dict[str, bool]:
         """情報収集の進捗を確認"""
@@ -398,6 +389,47 @@ class ADKHeraAgent:
 """
 
 
+    async def _get_latest_adk_session_id(self, retries: int = 3, timeout_sec: float = 10.0) -> Optional[str]:
+        """ADKの最新セッションIDを取得（リトライ付）"""
+        try:
+            import httpx
+            last_err = None
+            for attempt in range(1, retries + 1):
+                try:
+                    async with httpx.AsyncClient(timeout=timeout_sec) as client:
+                        r = await client.get(f"{self.adk_base_url}/apps/agents/users/user/sessions")
+                        if r.status_code == 200:
+                            data = r.json()
+                            print(f"🔍 ADKセッション一覧(try {attempt}/{retries}): {data}")
+                            if isinstance(data, list) and data:
+                                # lastUpdateTimeがあれば最新順に
+                                try:
+                                    data_sorted = sorted(
+                                        data,
+                                        key=lambda x: x.get("lastUpdateTime", 0),
+                                        reverse=True
+                                    )
+                                except Exception:
+                                    data_sorted = data
+                                first = data_sorted[0]
+                                if isinstance(first, dict):
+                                    sid = first.get("session_id") or first.get("id")
+                                    if sid:
+                                        return sid
+                except Exception as e:
+                    last_err = e
+                    print(f"⚠️ ADKセッションID取得エラー(try {attempt}/{retries}): {e}")
+                    # 簡易バックオフ
+                    import asyncio as _asyncio
+                    await _asyncio.sleep(min(1.5 * attempt, 5))
+
+            print(f"❌ ADKセッションIDの取得に失敗: {last_err}")
+            return None
+        except Exception as e:
+            print(f"❌ ADKセッションID取得処理エラー: {e}")
+            return None
+
+
     async def _save_session_data(self) -> None:
         """セッションデータを保存"""
         if not self.current_session:
@@ -406,10 +438,14 @@ class ADKHeraAgent:
 
         print(f"💾 セッションデータを保存中... セッションID: {self.current_session}")
 
-        # プロジェクトルート内のtmpディレクトリを使用
+        # プロジェクトルート内のtmpディレクトリを使用（事前に作成済みを想定）
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         session_dir = os.path.join(project_root, "tmp", "user_sessions", self.current_session)
-        os.makedirs(session_dir, exist_ok=True)
+
+        # ディレクトリの存在確認のみ（start_sessionで作成済み）
+        if not os.path.exists(session_dir):
+            print(f"⚠️ セッションディレクトリが存在しません: {session_dir}")
+            return
 
         print(f"📁 セッションディレクトリ: {session_dir}")
 
@@ -465,9 +501,39 @@ class ADKHeraAgent:
         print(f"📝 メッセージ: {message}")
         print(f"🆔 セッションID: {session_id}")
 
-        # セッション開始（初回の場合）
-        if not self.current_session and session_id:
-            await self.start_session(session_id)
+        # ADK既存セッションIDのみを使用
+        resolved_session_id = None
+        if session_id and session_id.strip():
+            resolved_session_id = session_id.strip()
+        else:
+            try:
+                import httpx
+                with httpx.Client(timeout=5) as client:
+                    r = client.get(f"{self.adk_base_url}/apps/agents/users/user/sessions")
+                    if r.status_code == 200 and isinstance(r.json(), list) and r.json():
+                        data = r.json()
+                        # lastUpdateTimeがあれば最新順に
+                        try:
+                            data_sorted = sorted(
+                                data,
+                                key=lambda x: x.get("lastUpdateTime", 0),
+                                reverse=True
+                            )
+                        except Exception:
+                            data_sorted = data
+                        first = data_sorted[0]
+                        if isinstance(first, dict):
+                            resolved_session_id = first.get("session_id") or first.get("id")
+            except Exception as e:
+                print(f"⚠️ ADKセッションID取得エラー(run): {e}")
+
+        if not resolved_session_id:
+            print("❌ ADKセッションIDが取得できません")
+            return "セッションIDが取得できませんでした"
+
+        if not self.current_session:
+            self.current_session = resolved_session_id
+            await self.start_session(self.current_session)
 
         # メッセージ処理
         result = await self.process_message(message)
@@ -483,11 +549,24 @@ class ADKHeraAgent:
         print(f"🔍 情報抽出ツールが呼び出されました: {user_message}")
 
         try:
-            # セッションIDが未設定なら生成
-            if not self.current_session:
-                import uuid
-                self.current_session = str(uuid.uuid4())
-                print(f"🆔 新規セッションID生成: {self.current_session}")
+            # 常に最新のADKセッションIDを取得して更新
+            latest_sid = await self._get_latest_adk_session_id(retries=3, timeout_sec=10.0)
+            if not latest_sid:
+                print("❌ ADKセッションIDが取得できません（ツール側）")
+                return "セッションIDが取得できませんでした"
+
+            # セッションIDが変更された場合は更新
+            if latest_sid != self.current_session:
+                self.current_session = latest_sid
+                print(f"🆔 セッションID更新: {self.current_session}")
+            else:
+                print(f"🆔 セッションID維持: {self.current_session}")
+
+            # セッション開始（ディレクトリ未作成時）
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            session_dir = os.path.join(project_root, "tmp", "user_sessions", self.current_session)
+            if not os.path.exists(session_dir):
+                await self.start_session(self.current_session)
 
             # 会話履歴にユーザーメッセージを追加
             await self._add_to_history("user", user_message)
@@ -497,7 +576,6 @@ class ADKHeraAgent:
 
             # エージェントの応答を生成
             response = await self._generate_hera_response(user_message)
-
             # エージェントの応答を履歴に追加
             await self._add_to_history("hera", response)
 
@@ -528,18 +606,45 @@ class ADKHeraAgent:
             print(f"❌ 完了判定エラー: {e}")
             return f"完了判定中にエラーが発生しました: {str(e)}"
 
-    async def _save_session_tool(self, session_id: str = "") -> str:
-        """セッションデータ保存ツール"""
-        print(f"💾 セッション保存ツールが呼び出されました: {session_id}")
 
+    async def _handle_photo_upload(self, photo_data: bytes, photo_type: str = "user") -> str:
+        """写真アップロード処理"""
         try:
-            if session_id and session_id.strip():
-                self.current_session = session_id
+            # セッションIDが未設定ならスキップ（ADKのIDのみ使用）
+            if not self.current_session:
+                print("⚠️ セッションID未設定のため写真保存をスキップ")
+                return None
 
-            # セッションデータを保存
-            await self._save_session_data()
+            # 写真保存ディレクトリ（事前に作成済みを想定）
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            photos_dir = os.path.join(project_root, "tmp", "user_sessions", self.current_session, "photos")
 
-            return f"セッションデータを保存しました: {self.current_session}"
+            # ディレクトリの存在確認のみ
+            if not os.path.exists(photos_dir):
+                print(f"⚠️ 写真ディレクトリが存在しません: {photos_dir}")
+                return None
+
+            # ファイル名を生成
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{photo_type}_{timestamp}.jpg"
+            filepath = os.path.join(photos_dir, filename)
+
+            # 写真を保存
+            with open(filepath, "wb") as f:
+                f.write(photo_data)
+
+            # プロファイルに写真パスを追加
+            if photo_type == "user":
+                if not self.user_profile.user_photos:
+                    self.user_profile.user_photos = []
+                self.user_profile.user_photos.append(filepath)
+            elif photo_type == "partner":
+                if not self.user_profile.partner_photos:
+                    self.user_profile.partner_photos = []
+                self.user_profile.partner_photos.append(filepath)
+
+            return filepath
+
         except Exception as e:
-            print(f"❌ セッション保存エラー: {e}")
-            return f"セッション保存中にエラーが発生しました: {str(e)}"
+            print(f"❌ 写真アップロードエラー: {e}")
+            return None
