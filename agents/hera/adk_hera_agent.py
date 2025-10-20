@@ -13,7 +13,6 @@ from enum import Enum
 # Google ADK imports
 from google.adk.agents.llm_agent import Agent
 
-
 # Pydantic for data validation
 from pydantic import BaseModel, Field
 
@@ -109,12 +108,44 @@ class ADKHeraAgent:
 - 必要な情報が十分に収集されたと判断したら、「もう十分」「これで十分」などと明確に表現してください
 - 情報収集が完了したと判断したら、自然に会話を終了する準備をしてください
 - 常に愛情深く、家族思いの神として振る舞ってください
+
+利用可能なツール：
+- extract_user_information: ユーザー情報を抽出・保存
+- check_session_completion: 情報収集完了を判定
+- save_session_data: セッションデータを保存
+
+これらのツールを適切に使用して、ユーザー情報の収集と管理を行ってください。
 """
 
     def _get_agent_tools(self) -> List[Any]:
         """エージェントのツールを取得"""
-        # 必要に応じてツールを追加
-        return []
+        from google.adk.tools import FunctionTool
+
+        # カスタムツールを定義
+        tools = []
+
+        # 情報抽出ツール
+        extract_info_tool = FunctionTool(
+            func=self._extract_user_info_tool,
+            require_confirmation=False
+        )
+        tools.append(extract_info_tool)
+
+        # セッション完了判定ツール
+        completion_tool = FunctionTool(
+            func=self._check_completion_tool,
+            require_confirmation=False
+        )
+        tools.append(completion_tool)
+
+        # セッションデータ保存ツール
+        save_tool = FunctionTool(
+            func=self._save_session_tool,
+            require_confirmation=False
+        )
+        tools.append(save_tool)
+
+        return tools
 
 
     async def start_session(self, session_id: str) -> str:
@@ -245,35 +276,41 @@ class ADKHeraAgent:
     async def _check_completion_with_llm(self, user_message: str) -> bool:
         """LLMを使用して情報収集完了を判定"""
         try:
-            response = await self.agent.run(
-                message=f"""
-                以下の情報収集状況を確認してください：
+            print(f"🔍 LLM完了判定を実行中...")
+            print(f"📝 ユーザーメッセージ: {user_message}")
+            print(f"👤 現在のプロファイル: {await self._format_collected_info()}")
 
-                現在のユーザープロファイル：
-                {await self._format_collected_info()}
+            # フォールバック: ADKエージェントではなく直接Gemini APIで判定
+            from google.generativeai import GenerativeModel
+            model = GenerativeModel('gemini-2.5-pro')
+            prompt = f"""
+以下の情報収集状況を確認してください：
 
-                ユーザーの最新メッセージ：
-                {user_message}
+現在のユーザープロファイル：
+{await self._format_collected_info()}
 
-                必要な情報が十分に収集されたかどうかを判断してください。
-                以下の条件を考慮してください：
-                - 年齢、収入、家族構成、パートナー情報、子ども情報、趣味、仕事、居住地
-                - 情報が不足していても、ユーザーが「もう十分」「これで十分」などと言っている場合は完了とする
-                - エージェントが「もう十分」と判断している場合は完了とする
+ユーザーの最新メッセージ：
+{user_message}
 
-                完了の場合は「COMPLETED」、未完了の場合は「INCOMPLETE」で回答してください。
-                """,
-                context={
-                    "conversation_history": self.conversation_history,
-                    "user_profile": self.user_profile.dict()
-                }
-            )
+必要な情報が十分に収集されたかどうかを判断してください。
+以下の条件を考慮してください：
+- 年齢、収入、家族構成、パートナー情報、子ども情報、趣味、仕事、居住地
+- 情報が不足していても、ユーザーが「もう十分」「これで十分」などと言っている場合は完了とする
+- エージェントが「もう十分」と判断している場合は完了とする
 
-            response_text = response.content if hasattr(response, 'content') else str(response)
-            return "COMPLETED" in response_text.upper()
+完了の場合は「COMPLETED」、未完了の場合は「INCOMPLETE」で回答してください。
+"""
+            response = model.generate_content(prompt)
+            response_text = response.text if hasattr(response, 'text') else str(response)
+            is_completed = "COMPLETED" in response_text.upper()
+
+            print(f"🤖 LLM判定結果: {response_text}")
+            print(f"✅ 完了判定: {is_completed}")
+
+            return is_completed
 
         except Exception as e:
-            print(f"LLM完了判定エラー: {e}")
+            print(f"❌ LLM完了判定エラー: {e}")
             return False
 
 
@@ -309,20 +346,31 @@ class ADKHeraAgent:
     async def _save_session_data(self) -> None:
         """セッションデータを保存"""
         if not self.current_session:
+            print(f"⚠️ セッションIDが設定されていません: {self.current_session}")
             return
+
+        print(f"💾 セッションデータを保存中... セッションID: {self.current_session}")
 
         # プロジェクトルート内のtmpディレクトリを使用
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         session_dir = os.path.join(project_root, "tmp", "user_sessions", self.current_session)
         os.makedirs(session_dir, exist_ok=True)
 
+        print(f"📁 セッションディレクトリ: {session_dir}")
+
         # ユーザープロファイルを保存
+        profile_data = self.user_profile.dict()
+        print(f"👤 ユーザープロファイル: {profile_data}")
+
         with open(f"{session_dir}/user_profile.json", "w", encoding="utf-8") as f:
-            json.dump(self.user_profile.dict(), f, ensure_ascii=False, indent=2)
+            json.dump(profile_data, f, ensure_ascii=False, indent=2)
 
         # 会話履歴を保存
+        print(f"💬 会話履歴数: {len(self.conversation_history)}")
         with open(f"{session_dir}/conversation_history.json", "w", encoding="utf-8") as f:
             json.dump(self.conversation_history, f, ensure_ascii=False, indent=2)
+
+        print(f"✅ セッションデータ保存完了: {session_dir}")
 
 
     def get_user_profile(self) -> UserProfile:
@@ -354,3 +402,79 @@ class ADKHeraAgent:
         }
 
         return session_info
+
+    # ADKの標準フローに対応するメソッドを追加
+    async def run(self, message: str, session_id: str = None, **kwargs) -> str:
+        """ADKの標準runメソッド"""
+        print(f"🚀 ADK runメソッドが呼び出されました")
+        print(f"📝 メッセージ: {message}")
+        print(f"🆔 セッションID: {session_id}")
+
+        # セッション開始（初回の場合）
+        if not self.current_session and session_id:
+            await self.start_session(session_id)
+
+        # メッセージ処理
+        result = await self.process_message(message)
+
+        print(f"📤 レスポンス: {result.get('text_response', '')}")
+        print(f"✅ 完了: {result.get('is_complete', False)}")
+
+        return result.get('text_response', '')
+
+    # ADKツール用のメソッド
+    async def _extract_user_info_tool(self, user_message: str) -> str:
+        """ユーザー情報抽出ツール"""
+        print(f"🔍 情報抽出ツールが呼び出されました: {user_message}")
+
+        try:
+            # セッションIDが未設定なら生成
+            if not self.current_session:
+                import uuid
+                self.current_session = str(uuid.uuid4())
+                print(f"🆔 新規セッションID生成: {self.current_session}")
+            # ユーザー情報を抽出
+            await self._extract_information(user_message)
+
+            # セッションデータを保存
+            await self._save_session_data()
+
+            return f"ユーザー情報を抽出・保存しました: {await self._format_collected_info()}"
+        except Exception as e:
+            print(f"❌ 情報抽出エラー: {e}")
+            return f"情報抽出中にエラーが発生しました: {str(e)}"
+
+    async def _check_completion_tool(self, user_message: str) -> str:
+        """セッション完了判定ツール"""
+        print(f"🔍 完了判定ツールが呼び出されました: {user_message}")
+
+        try:
+            # LLMによる完了判定
+            is_complete = await self._check_completion_with_llm(user_message)
+
+            if is_complete:
+                print("✅ セッション完了と判定されました")
+                return "COMPLETED"
+            else:
+                print("⏳ セッション継続と判定されました")
+                return "INCOMPLETE"
+
+        except Exception as e:
+            print(f"❌ 完了判定エラー: {e}")
+            return f"完了判定中にエラーが発生しました: {str(e)}"
+
+    async def _save_session_tool(self, session_id: str = "") -> str:
+        """セッションデータ保存ツール"""
+        print(f"💾 セッション保存ツールが呼び出されました: {session_id}")
+
+        try:
+            if session_id and session_id.strip():
+                self.current_session = session_id
+
+            # セッションデータを保存
+            await self._save_session_data()
+
+            return f"セッションデータを保存しました: {self.current_session}"
+        except Exception as e:
+            print(f"❌ セッション保存エラー: {e}")
+            return f"セッション保存中にエラーが発生しました: {str(e)}"
