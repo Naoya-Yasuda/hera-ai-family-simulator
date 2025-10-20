@@ -109,8 +109,8 @@ Google ADKの正式なフレームワークを使用した高度なエージェ�
 4. 収集した情報を一時ファイルに保存
 5. 音声入力で自然な情報収集
 
-### 2. ADKエージェント対話フェーズ
-1. ADKヘーラーエージェントが高度な対話でユーザー情報を収集
+### 2. 家族マルチエージェント対話フェーズ
+1. エージェントが高度な対話でユーザー情報を収集
 2. Gemini Proを使用した自然な会話処理
 3. 音声入力・出力による直感的な対話体験
 4. リアルタイムでの情報抽出と分析
@@ -121,11 +121,10 @@ Google ADKの正式なフレームワークを使用した高度なエージェ�
 3. 音声付き動画コンテンツの作成
 4. 個別化された家族体験の提供
 
-### 4. コンテンツ生成・表示フェーズ
-1. 対話内容を基にストーリー生成
-2. イラストとストーリーを組み合わせて表示
-3. 動画コンテンツの生成・再生
-4. 子どもからの手紙の表示（毎回異なる落書き付き画像を動的生成）
+### 4. コンテンツ表示フェーズ
+1. イラストとストーリーを組み合わせて表示
+2. 動画コンテンツの生成・再生
+3. 子どもからの手紙の表示（毎回異なる落書き付き画像を動的生成）
 
 ---
 
@@ -133,22 +132,17 @@ Google ADKの正式なフレームワークを使用した高度なエージェ�
 
 ### フロントエンド
 - **音声入力**: Web Speech API + Google Cloud Speech-to-Text
-- **リアルタイム表示**: WebSocket + FastAPI
-- **動画再生**: HTML5 Video API
+- **リアルタイム表示**: FastAPI stream表示
+- **動画再生**: TBD
 - **音声出力**: Google Cloud Text-to-Speech
 
 ### バックエンド
 - **AI生成**: OpenAI GPT API + Google Cloud AI Platform
-- **画像生成**: DALL-E + Google Cloud Vision API
+- **画像生成**: Gemini nanobanana
 - **音声処理**: Google Cloud Speech-to-Text & Text-to-Speech
-- **対話管理**: Google Cloud Dialogflow
-- **検索・推奨**: Google Cloud Discovery Engine
 
 ### インフラ
-- **ホスティング**: Google Cloud Platform
-- **データベース**: Google Cloud Firestore + Redis
-- **CDN**: Google Cloud CDN
-- **監視**: Google Cloud Monitoring
+- **ホスティング**: ローカルホスト
 
 ---
 

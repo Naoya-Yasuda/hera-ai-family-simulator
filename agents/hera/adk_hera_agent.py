@@ -106,8 +106,8 @@ class ADKHeraAgent:
    - 居住地
 
 重要な指示：
-- 必要な情報がすべて揃ったら、自然に会話を終了する準備をしてください
-- 情報収集が完了したことをユーザーに伝えてください
+- 必要な情報が十分に収集されたと判断したら、「もう十分」「これで十分」などと明確に表現してください
+- 情報収集が完了したと判断したら、自然に会話を終了する準備をしてください
 - 常に愛情深く、家族思いの神として振る舞ってください
 """
 
@@ -138,11 +138,8 @@ class ADKHeraAgent:
         # 会話履歴に追加
         await self._add_to_history("user", user_message)
 
-        # 情報収集の進捗を確認
-        progress = self._check_information_progress()
-
         # ADKエージェントを使用して応答を生成
-        response = await self._generate_adk_response(user_message, progress)
+        response = await self._generate_adk_response(user_message, {})
 
         # 応答を履歴に追加
         await self._add_to_history("hera", response)
@@ -150,9 +147,8 @@ class ADKHeraAgent:
         # ユーザー情報を抽出・更新
         await self._extract_information(user_message)
 
-        # 情報収集完了後の進捗を再確認
-        final_progress = self._check_information_progress()
-        is_complete = self.is_information_complete()
+        # LLMによる完了判定
+        is_complete = await self._check_completion_with_llm(user_message)
 
         # セッションデータを保存
         await self._save_session_data()
@@ -165,16 +161,12 @@ class ADKHeraAgent:
 
         return {
             "text_response": response,
-            "information_progress": final_progress,
             "is_complete": is_complete,
             "session_ended": is_complete
         }
 
     async def _generate_adk_response(self, user_message: str, progress: Dict[str, bool]) -> str:
         """ADKエージェントを使用して応答を生成"""
-
-        # 未収集の情報を特定
-        missing_info = [key for key, collected in progress.items() if not collected]
 
         try:
             # ADKエージェントの正しい使用方法
@@ -183,7 +175,6 @@ class ADKHeraAgent:
                 context={
                     "conversation_history": self.conversation_history,
                     "user_profile": self.user_profile.dict(),
-                    "missing_info": missing_info,
                     "collected_info": await self._format_collected_info()
                 }
             )
@@ -250,6 +241,40 @@ class ADKHeraAgent:
             value = getattr(self.user_profile, info_key, None)
             progress[info_key] = value is not None
         return progress
+
+    async def _check_completion_with_llm(self, user_message: str) -> bool:
+        """LLMを使用して情報収集完了を判定"""
+        try:
+            response = await self.agent.run(
+                message=f"""
+                以下の情報収集状況を確認してください：
+
+                現在のユーザープロファイル：
+                {await self._format_collected_info()}
+
+                ユーザーの最新メッセージ：
+                {user_message}
+
+                必要な情報が十分に収集されたかどうかを判断してください。
+                以下の条件を考慮してください：
+                - 年齢、収入、家族構成、パートナー情報、子ども情報、趣味、仕事、居住地
+                - 情報が不足していても、ユーザーが「もう十分」「これで十分」などと言っている場合は完了とする
+                - エージェントが「もう十分」と判断している場合は完了とする
+
+                完了の場合は「COMPLETED」、未完了の場合は「INCOMPLETE」で回答してください。
+                """,
+                context={
+                    "conversation_history": self.conversation_history,
+                    "user_profile": self.user_profile.dict()
+                }
+            )
+
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            return "COMPLETED" in response_text.upper()
+
+        except Exception as e:
+            print(f"LLM完了判定エラー: {e}")
+            return False
 
 
     async def _format_collected_info(self) -> str:
