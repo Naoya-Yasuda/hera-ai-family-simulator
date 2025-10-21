@@ -153,6 +153,19 @@ class ADKHeraAgent:
 
         return tools
 
+    def _wrap_response(self, message: Optional[str]) -> Dict[str, str]:
+        """UI/APIで扱いやすい共通形式に整形"""
+        text = (message or "").strip()
+        if not text:
+            text = "お話を伺いました。続きもぜひ教えてください。"
+        return {
+            "speaker": self.persona.name,
+            "message": text,
+        }
+
+    def _wrap_response_json(self, message: Optional[str]) -> str:
+        return json.dumps(self._wrap_response(message), ensure_ascii=False)
+
 
     async def start_session(self, session_id: str) -> str:
         """セッション開始"""
@@ -175,7 +188,7 @@ class ADKHeraAgent:
         return ""
 
 
-    async def _generate_adk_response(self, user_message: str, progress: Dict[str, bool]) -> str:
+    async def _generate_adk_response(self, user_message: str, progress: Dict[str, bool]) -> Dict[str, str]:
         """ADKエージェントを使用して応答を生成"""
 
         try:
@@ -189,11 +202,12 @@ class ADKHeraAgent:
                 }
             )
 
-            return response.content if hasattr(response, 'content') else str(response)
+            raw_text = response.content if hasattr(response, 'content') else str(response)
+            return self._wrap_response(raw_text)
 
         except Exception as e:
             print(f"ADKエージェント処理エラー: {e}")
-            return "もう少し詳しく教えていただけますか？"
+            return self._wrap_response("もう少し詳しく教えていただけますか？")
 
 
     async def _extract_information(self, user_message: str) -> Dict[str, Any]:
@@ -575,14 +589,22 @@ class ADKHeraAgent:
                 await self.start_session(self.current_session)
 
         # ツールを直接呼び出して応答を生成（標準フロー無効化のため）
-        response = await self._extract_user_info_tool(message)
+        payload_raw = await self._extract_user_info_tool(message)
 
-        if not response or not response.strip():
-            response = "お話を伺いました。続きもぜひ教えてください。"
+        if isinstance(payload_raw, dict):
+            payload = payload_raw
+            payload_json = json.dumps(payload, ensure_ascii=False)
+        else:
+            try:
+                payload = json.loads(payload_raw)
+                payload_json = payload_raw
+            except Exception:
+                payload = self._wrap_response(None)
+                payload_json = json.dumps(payload, ensure_ascii=False)
 
-        print(f"📤 レスポンス: {response}")
+        print(f"📤 レスポンス: {payload}")
 
-        return response
+        return payload_json
 
     # ADKツール用のメソッド
     async def _extract_user_info_tool(self, user_message: str) -> str:
@@ -614,20 +636,22 @@ class ADKHeraAgent:
             await self._extract_information(user_message)
 
             # エージェントの応答を生成
-            response = await self._generate_hera_response(user_message)
-            if not response or not response.strip():
-                response = "お話を伺いました。続きもぜひ教えてください。"
+            response_text = await self._generate_hera_response(user_message)
+            payload = self._wrap_response(response_text)
 
             # エージェントの応答を履歴に追加
-            await self._add_to_history("hera", response)
+            await self._add_to_history("hera", payload["message"])
             # 会話履歴のみ即時保存
             await self._save_conversation_history()
 
             # 毎ターンの保存は行わず、メモリにのみ保持
-            return response
+            return json.dumps(payload, ensure_ascii=False)
         except Exception as e:
             print(f"❌ 情報抽出エラー: {e}")
-            return f"申し訳ございません。エラーが発生しました: {str(e)}"
+            return json.dumps(
+                self._wrap_response(f"申し訳ございません。エラーが発生しました: {str(e)}"),
+                ensure_ascii=False,
+            )
 
     async def _extract_missing_information(self, user_message: str, missing_fields: List[str]) -> Dict[str, Any]:
         """不足しているフィールドのみ抽出"""

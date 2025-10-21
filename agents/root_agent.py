@@ -1,7 +1,6 @@
 from .hera.adk_hera_agent import ADKHeraAgent
 import os
 from dotenv import load_dotenv
-from family import create_family_session
 
 # 環境変数を読み込み
 load_dotenv()
