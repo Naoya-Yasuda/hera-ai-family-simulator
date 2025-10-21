@@ -113,3 +113,11 @@ class FamilyToolSet:
 
     def tool_names(self) -> List[str]:
         return [tool.name for tool in self.tools]
+
+    def get_personas(self) -> List[Persona]:
+        """全ての家族メンバーのペルソナを取得
+
+        Returns:
+            List[Persona]: パートナーと子供を含む全ペルソナのリスト
+        """
+        return [tool.persona for tool in self.tools]
