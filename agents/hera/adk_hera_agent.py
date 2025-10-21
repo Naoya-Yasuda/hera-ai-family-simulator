@@ -31,6 +31,7 @@ class UserProfile(BaseModel):
     location: Optional[str] = Field(None, description="居住地")
     partner_info: Optional[Dict[str, Any]] = Field(None, description="パートナー情報")
     children_info: Optional[List[Dict[str, Any]]] = Field(None, description="子ども情報")
+    partner_face_description: Optional[str] = Field(None, description="配偶者の顔の特徴の文章記述")
     created_at: Optional[str] = Field(None, description="作成日時")
 
 
@@ -71,7 +72,7 @@ class ADKHeraAgent:
         self.required_info = [
             "age", "gender", "income_range", "lifestyle", "family_structure",
             "interests", "work_style", "future_career", "location",
-            "partner_info", "children_info"
+            "partner_info", "children_info", "partner_face_description"
         ]
 
         # ADKエージェントの初期化（標準的な方法）
@@ -111,6 +112,7 @@ class ADKHeraAgent:
 - 将来のキャリアについては、現在の仕事と区別して聞いてください
 - 必要な情報が十分に収集されたと判断したら、「もう十分」「これで十分」などと明確に表現してください
 - 常に愛情深く、家族思いの神として振る舞ってください
+ - 配偶者の顔特徴を取得する際は、文章で丁寧に聞き出してください
 
 利用方針（厳守）：
 - 必ず最初にextract_user_infoを呼び出すこと
