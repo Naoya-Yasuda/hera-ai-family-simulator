@@ -16,7 +16,7 @@ cd /path/to/hera-ai-family-simulator
 python -m venv venv
 
 # 仮想環境有効化
-source venv/bin/activate  # Windows: venv\Scripts\activate
+source venv/bin/activate  # Windows: venv\Scripts\activate (.\.venv\Scripts\Activate.ps1)
 
 # 依存関係のインストール 一度だけ
 pip install -r requirements.txt
