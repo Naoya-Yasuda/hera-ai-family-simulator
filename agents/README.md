@@ -13,7 +13,7 @@
 cd /path/to/hera-ai-family-simulator
 
 # 仮想環境の作成 一度だけ
-python -m venv venv
+python3 -m venv venv
 
 # 仮想環境有効化
 source venv/bin/activate  # Windows: venv\Scripts\activate (.\.venv\Scripts\Activate.ps1)
