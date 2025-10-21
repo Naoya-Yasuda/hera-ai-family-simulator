@@ -6,6 +6,7 @@ google.adk.agents.llm_agentを使用した正式なADKエージェント
 import json
 import os
 import asyncio
+import re
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from enum import Enum
@@ -30,9 +31,6 @@ class UserProfile(BaseModel):
     location: Optional[str] = Field(None, description="居住地")
     partner_info: Optional[Dict[str, Any]] = Field(None, description="パートナー情報")
     children_info: Optional[List[Dict[str, Any]]] = Field(None, description="子ども情報")
-    user_photos: List[str] = Field(default_factory=list, description="ユーザーの写真パス（必須）")
-    partner_photos: Optional[List[str]] = Field(None, description="配偶者の写真パス")
-    partner_face_description: Optional[str] = Field(None, description="配偶者の顔の方向性・特徴の文章記述（写真がない場合必須）")
     created_at: Optional[str] = Field(None, description="作成日時")
 
 
@@ -73,7 +71,7 @@ class ADKHeraAgent:
         self.required_info = [
             "age", "gender", "income_range", "lifestyle", "family_structure",
             "interests", "work_style", "future_career", "location",
-            "partner_info", "children_info", "user_photos", "partner_photos", "partner_face_description"
+            "partner_info", "children_info"
         ]
 
         # ADKエージェントの初期化（標準的な方法）
@@ -102,17 +100,14 @@ class ADKHeraAgent:
 1. ユーザーから家族についての情報を自然な対話で収集する
 2. 温かみのある、親しみやすい口調で応答する
 3. 以下の情報を収集する：
-   - 年齢、性別
+   - 名前、年齢、性別
    - 収入範囲、ライフスタイル
    - 家族構成、パートナー情報、子ども情報
    - 趣味・興味、現在の仕事スタイル、将来のキャリア
    - 居住地
-   - ユーザーの写真（必須）
-   - 配偶者の写真または顔の特徴の文章記述（どちらか必須）
+   - 配偶者の顔の特徴の文章記述
 
 重要な指示：
-- ユーザーの写真は必須です。提供されない場合は明確に要求してください
-- 配偶者の写真が提供できない場合は、顔の方向性や特徴を文章で記述してもらってください
 - 将来のキャリアについては、現在の仕事と区別して聞いてください
 - 必要な情報が十分に収集されたと判断したら、「もう十分」「これで十分」などと明確に表現してください
 - 常に愛情深く、家族思いの神として振る舞ってください
@@ -121,12 +116,10 @@ class ADKHeraAgent:
 - 必ず最初にextract_user_infoを呼び出すこと
 - ツール実行前に通常のテキスト応答を出力してはならない
 - extract_user_infoのfunction_callを出力した場合は、その直後に必ず最終テキストメッセージを返し、ツールから受け取った文字列をそのまま提示すること
-- ユーザーが写真を提供したらupload_photoツールを呼び出し、保存成功メッセージを受け取った後に会話を継続すること
 - check_session_completionは必要時のみ呼び出す
 
 利用可能なツール：
 - extract_user_info: ユーザー情報を抽出・保存（最初に必ず呼ぶ／戻り値=最終応答）
-- upload_photo: 添付された写真ファイルを保存
 - check_session_completion: 情報収集完了を判定
 
 これらのツールを適切に使用して、ユーザー情報の収集と管理を行ってください。
@@ -145,13 +138,6 @@ class ADKHeraAgent:
             require_confirmation=False
         )
         tools.append(extract_info_tool)
-
-        # 写真アップロードツール
-        upload_photo_tool = FunctionTool(
-            func=self._upload_photo_tool,
-            require_confirmation=False
-        )
-        tools.append(upload_photo_tool)
 
         # セッション完了判定ツール
         completion_tool = FunctionTool(
@@ -224,6 +210,7 @@ class ADKHeraAgent:
 現在のプロファイル: {self.user_profile.dict()}
 
 以下のフィールドから該当する情報を抽出してください：
+- name: 名前（文字列）
 - age: 年齢（数値）
 - gender: 性別（文字列: "男性", "女性", "その他"）
 - income_range: 収入範囲（文字列）
@@ -235,8 +222,6 @@ class ADKHeraAgent:
 - location: 居住地（文字列）
 - partner_info: パートナー情報（辞書）
 - children_info: 子ども情報（配列）
-- user_photos: ユーザーの写真パス（配列、必須）
-- partner_photos: 配偶者の写真パス（配列）
 - partner_face_description: 配偶者の顔の方向性・特徴の文章記述（写真がない場合必須）
 
 抽出できた情報のみをJSON形式で返してください。例：
@@ -251,7 +236,6 @@ class ADKHeraAgent:
             # JSON形式で抽出された情報をパース
             try:
                 # JSON部分を抽出
-                import re
                 json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
                 if json_match:
                     json_str = json_match.group(0)
@@ -283,16 +267,7 @@ class ADKHeraAgent:
         progress = {}
         for info_key in self.required_info:
             value = getattr(self.user_profile, info_key, None)
-            if info_key == "user_photos":
-                # ユーザーの写真は必須（空のリストは不可）
-                progress[info_key] = value is not None and len(value) > 0
-            elif info_key in ["partner_photos", "partner_face_description"]:
-                # 配偶者の写真または顔の特徴の文章記述のどちらかが必須
-                partner_photos = getattr(self.user_profile, "partner_photos", None)
-                partner_face_description = getattr(self.user_profile, "partner_face_description", None)
-                progress[info_key] = (partner_photos is not None and len(partner_photos) > 0) or (partner_face_description is not None and partner_face_description.strip() != "")
-            else:
-                progress[info_key] = value is not None
+            progress[info_key] = value is not None
         return progress
 
     async def _check_completion_with_llm(self, user_message: str) -> bool:
@@ -316,8 +291,7 @@ class ADKHeraAgent:
 
 必要な情報が十分に収集されたかどうかを判断してください。
 以下の条件を考慮してください：
-- 年齢、収入、家族構成、パートナー情報、子ども情報、趣味、仕事、居住地
-- ユーザーの写真（必須）
+- 年齢、収入、職業、家族構成、パートナー情報、子ども情報、趣味、仕事、居住地
 - 配偶者の写真または顔の特徴の文章記述（どちらか必須）
 - 情報が不足していても、ユーザーが「もう十分」「これで十分」などと言っている場合は完了とする
 - エージェントが「もう十分」と判断している場合は完了とする
@@ -384,11 +358,10 @@ class ADKHeraAgent:
 1. 温かみのある、親しみやすい口調で応答する
 2. 家族についての情報を自然な対話で収集する
 3. 以下の情報を収集する：
-   - 年齢、収入範囲、ライフスタイル、家族構成
+   - 年齢、収入範囲、ライフスタイル、将来の家族構成
    - パートナー情報、子ども情報、趣味・興味
-   - 仕事スタイル、居住地
-   - ユーザーの写真（必須）
-   - 配偶者の写真または顔の特徴の文章記述（どちらか必須）
+   - 職業、居住地、将来のキャリア
+   - 配偶者の顔の特徴の文章記述（必須）
 
 重要な指示：
 - 必要な情報が十分に収集されたと判断したら、「もう十分」「これで十分」などと明確に表現してください
@@ -678,82 +651,3 @@ class ADKHeraAgent:
         except Exception as e:
             print(f"❌ 完了判定エラー: {e}")
             return f"完了判定中にエラーが発生しました: {str(e)}"
-
-
-    async def _handle_photo_upload(self, photo_data: bytes, photo_type: str = "user") -> str:
-        """写真アップロード処理"""
-        try:
-            # セッションIDが未設定ならスキップ（ADKのIDのみ使用）
-            if not self.current_session:
-                print("⚠️ セッションID未設定のため写真保存をスキップ")
-                return None
-
-            # 写真保存ディレクトリ（事前に作成済みを想定）
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            photos_dir = os.path.join(project_root, "tmp", "user_sessions", self.current_session, "photos")
-
-            # ディレクトリの存在確認のみ
-            if not os.path.exists(photos_dir):
-                print(f"⚠️ 写真ディレクトリが存在しません: {photos_dir}")
-                return None
-
-            # ファイル名を生成
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{photo_type}_{timestamp}.jpg"
-            filepath = os.path.join(photos_dir, filename)
-
-            # 写真を保存
-            with open(filepath, "wb") as f:
-                f.write(photo_data)
-
-            # プロファイルに写真パスを追加
-            if photo_type == "user":
-                if not self.user_profile.user_photos:
-                    self.user_profile.user_photos = []
-                self.user_profile.user_photos.append(filepath)
-            elif photo_type == "partner":
-                if not self.user_profile.partner_photos:
-                    self.user_profile.partner_photos = []
-                self.user_profile.partner_photos.append(filepath)
-
-            return filepath
-
-        except Exception as e:
-            print(f"❌ 写真アップロードエラー: {e}")
-            return None
-
-
-    async def _upload_photo_tool(self, *, file_id: str, photo_type: str = "user") -> str:
-        """ADKの添付ファイルを取得して保存するツール"""
-        print(f"⬆️ 写真アップロードツール: file_id={file_id}, type={photo_type}")
-
-        if not file_id:
-            return "ファイルIDが指定されていません"
-
-        try:
-            import httpx
-
-            if not self.current_session:
-                latest_sid = await self._get_latest_adk_session_id(retries=3, timeout_sec=10.0)
-                if not latest_sid:
-                    return "セッションIDが取得できないため写真を保存できません"
-                self.current_session = latest_sid
-
-            endpoint = f"{self.adk_base_url}/apps/agents/users/user/sessions/{self.current_session}/files/{file_id}"
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.get(endpoint)
-                if response.status_code != 200:
-                    print(f"❌ 写真取得失敗: status={response.status_code}, body={response.text}")
-                    return "写真の取得に失敗しました"
-
-                content = response.content
-
-            saved_path = await self._handle_photo_upload(content, photo_type=photo_type)
-            if not saved_path:
-                return "写真の保存に失敗しました"
-
-            return f"写真を保存しました: {saved_path}"
-
-        except Exception as e:
-            print(f"❌ 写真アップロードツールエラー: {e}")
-            return f"写真の保存中にエラーが発生しました: {str(e)}"
