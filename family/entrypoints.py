@@ -185,10 +185,10 @@ class FamilySessionAgent(Agent):
                 logger.error(f"ファイル保存中にエラーが発生しました: {e}", exc_info=True)
 
         # 5. ストーリーをイベントとして返却
+        # Note: CallbackContext doesn't have 'branch' attribute, so we omit it
         return Event(
             invocation_id=callback_context.invocation_id,
             author=self.name,
-            branch=callback_context.branch,
             content=types.Content(
                 role="assistant", parts=[types.Part(text=story)]
             ),
