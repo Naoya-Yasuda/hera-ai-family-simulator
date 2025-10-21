@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict
+from typing import Any, ClassVar, Dict
 
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents.llm_agent import Agent
+from google.adk.events.event import Event
+from google.adk.events.event_actions import EventActions
+from google.genai import types
 
 from .tooling import FamilyToolSet
 
@@ -42,6 +45,16 @@ class FamilyProfileLoader:
 class FamilySessionAgent(Agent):
     """進行役が家族ツールを呼び出すラッパー"""
 
+    SUMMARY_PROMPT: ClassVar[str] = """
+あなたは家族会話の司会者です。これまでの会話ログと、家族が希望した週末のお出かけ情報をもとに、温かいトーンで最終メッセージを日本語で作成してください。
+
+出力要件:
+- 1〜2段落程度で、行き先と現地でやりたいことを自然に織り交ぜる
+- 会話相手（ユーザー）への感謝や、共有したい気持ちを含める
+- 最後は「楽しみだね！」で締める
+- 箇条書きは使わない
+"""
+
     def __init__(self, profile: Dict[str, Any], api_key: str | None = None, **kwargs: Any) -> None:
         super().__init__(
             name="family_session_agent",
@@ -52,6 +65,7 @@ class FamilySessionAgent(Agent):
         self._toolset = FamilyToolSet(profile)
         self._profile_loaded = bool(profile)
         self.before_agent_callback = self._ensure_profile
+        self.after_agent_callback = self._post_process
         if self._profile_loaded:
             self._apply_toolset()
 
@@ -74,6 +88,60 @@ class FamilySessionAgent(Agent):
     def _apply_toolset(self) -> None:
         self.tools = self._toolset.build_tools()
         self.instruction = self._build_instruction(self._toolset.tool_names())
+
+    async def _post_process(self, callback_context: CallbackContext):
+        collected = callback_context.state.get("family_trip_info")
+        if not collected:
+            return None
+
+        destination = collected.get("destination")
+        activities = collected.get("activities")
+        if not destination or not activities:
+            return None
+
+        conversation_log = callback_context.state.get("family_conversation_log", [])
+        summary_agent = Agent(
+            name="family_story_summarizer",
+            description="会話内容をまとめるエージェント",
+            model="gemini-2.5-pro",
+            instruction=self.SUMMARY_PROMPT,
+        )
+
+        history_snippets = "\n".join(
+            f"- {item['speaker']}: {item['message']}"
+            for item in conversation_log
+        )
+        summary_prompt = (
+            "会話ログ:\n"
+            f"{history_snippets or 'ログなし'}\n\n"
+            f"行き先: {destination}\n"
+            f"やりたいこと: {', '.join(activities)}"
+        )
+
+        summary_response = await summary_agent.run(summary_prompt)
+
+        session_id = callback_context.session.id
+        if session_id:
+            base_dir = FamilyProfileLoader.get_base_dir()
+            session_dir = os.path.join(base_dir, session_id)
+            os.makedirs(session_dir, exist_ok=True)
+            summary_payload = {
+                "destination": destination,
+                "activities": activities,
+                "summary": summary_response,
+                "conversation_log": conversation_log,
+            }
+            output_path = os.path.join(session_dir, "family_plan.json")
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(summary_payload, f, ensure_ascii=False, indent=2)
+
+        return Event(
+            invocation_id=callback_context.invocation_id,
+            author=self.name,
+            branch=callback_context.branch,
+            content=types.Content(role="assistant", parts=[types.Part.from_text(summary_response)]),
+            actions=EventActions(end_of_agent=True),
+        )
 
     def _build_instruction(self, tool_names: list[str]) -> str:
         joined = ", ".join(tool_names)

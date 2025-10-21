@@ -30,11 +30,31 @@ class FamilyTool:
             response = await loop.run_in_executor(None, self.model.generate_content, prompt)
             text = response.text if hasattr(response, "text") else str(response)
 
+            destination = None
+            activities: List[str] | None = None
             try:
                 result = json.loads(text)
                 speaker_text = result.get("message", text)
+                destination = result.get("destination")
+                activities_field = result.get("activities")
+                if isinstance(activities_field, list):
+                    activities = [str(item) for item in activities_field if item]
+                elif activities_field:
+                    activities = [str(activities_field)]
             except json.JSONDecodeError:
                 speaker_text = text.strip()
+
+            trip_info = tool_context.state.setdefault("family_trip_info", {})
+            if destination and isinstance(destination, str):
+                trip_info["destination"] = destination
+            if activities:
+                stored = trip_info.setdefault("activities", [])
+                for activity in activities:
+                    if activity not in stored:
+                        stored.append(activity)
+
+            log = tool_context.state.setdefault("family_conversation_log", [])
+            log.append({"speaker": self.persona.role, "message": speaker_text})
 
             return {
                 "speaker": self.persona.role,
@@ -58,7 +78,8 @@ class FamilyTool:
 
 ルール:
 - 返答は以下のJSON形式で出力してください。
-  {{"message": "ここに150字以内の返答"}}
+-  {{"message": "ここに300字以内の返答", "destination": "行きたい場所名", "activities": ["やりたいこと1", "やりたいこと2"]}}
+- destination や activities が不明な場合は null や空配列でも構いません
 - ユーザーの話題に触れ、具体的なエピソードを想像して伝える
 - 他の家族の発言と矛盾しないよう注意する
 - 常に日本語で返答する
