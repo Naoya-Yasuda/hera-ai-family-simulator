@@ -67,6 +67,7 @@ class ADKHeraAgent:
         self.current_session = None
         self.user_profile = UserProfile()
         self.conversation_history = []
+        self.last_extracted_fields: Dict[str, Any] = {}
 
         # 情報収集の進捗
         self.required_info = [
@@ -195,7 +196,7 @@ class ADKHeraAgent:
             return "もう少し詳しく教えていただけますか？"
 
 
-    async def _extract_information(self, user_message: str) -> None:
+    async def _extract_information(self, user_message: str) -> Dict[str, Any]:
         """ユーザーメッセージから情報を抽出"""
         print(f"🔍 情報抽出開始: {user_message}")
 
@@ -236,6 +237,7 @@ class ADKHeraAgent:
             print(f"🤖 抽出レスポンス: {response_text}")
 
             # JSON形式で抽出された情報をパース
+            extracted_info: Dict[str, Any] = {}
             try:
                 # JSON部分を抽出
                 json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
@@ -250,8 +252,12 @@ class ADKHeraAgent:
                 # 手動抽出は行わず、次発話でのLLM抽出に委ねる
                 print(f"⚠️ JSON解析エラー（手動抽出はスキップ）: {e}")
 
+            self.last_extracted_fields = extracted_info
+            return extracted_info
+
         except Exception as e:
             print(f"❌ 情報抽出エラー（手動抽出はスキップ）: {e}")
+            return {}
 
     async def _update_user_profile(self, extracted_info: Dict[str, Any]) -> None:
         """ユーザープロファイルを更新"""
@@ -269,8 +275,17 @@ class ADKHeraAgent:
         progress = {}
         for info_key in self.required_info:
             value = getattr(self.user_profile, info_key, None)
-            progress[info_key] = value is not None
+            progress[info_key] = not self._is_value_missing(value)
         return progress
+
+    def _is_value_missing(self, value: Any) -> bool:
+        if value is None:
+            return True
+        if isinstance(value, str) and not value.strip():
+            return True
+        if isinstance(value, (list, dict)) and len(value) == 0:
+            return True
+        return False
 
     async def _check_completion_with_llm(self, user_message: str) -> bool:
         """LLMを使用して情報収集完了を判定"""
@@ -614,6 +629,44 @@ class ADKHeraAgent:
             print(f"❌ 情報抽出エラー: {e}")
             return f"申し訳ございません。エラーが発生しました: {str(e)}"
 
+    async def _extract_missing_information(self, user_message: str, missing_fields: List[str]) -> Dict[str, Any]:
+        """不足しているフィールドのみ抽出"""
+        if not missing_fields:
+            return {}
+
+        print(f"🔍 不足項目の抽出を実行: {missing_fields}")
+
+        try:
+            from google.generativeai import GenerativeModel
+            model = GenerativeModel('gemini-2.5-pro')
+
+            prompt = f"""
+以下の不足しているフィールドのみをJSON形式で抽出してください。存在しない場合はフィールドを含めないでください。
+
+不足フィールド: {missing_fields}
+ユーザーメッセージ: {user_message}
+現在のプロファイル: {self.user_profile.dict()}
+"""
+
+            response = model.generate_content(prompt)
+            response_text = response.text if hasattr(response, 'text') else str(response)
+            print(f"🤖 不足フィールド抽出レスポンス: {response_text}")
+
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if not json_match:
+                print("⚠️ 不足項目抽出: JSON形式が見つかりません")
+                return {}
+
+            info = json.loads(json_match.group(0))
+            if info:
+                await self._update_user_profile(info)
+                self.last_extracted_fields = info
+            return info
+
+        except Exception as e:
+            print(f"❌ 不足項目抽出エラー: {e}")
+            return {}
+
     async def _check_completion_tool(self, user_message: str) -> str:
         """セッション完了判定ツール"""
         print(f"🔍 完了判定ツールが呼び出されました: {user_message}")
@@ -623,6 +676,12 @@ class ADKHeraAgent:
             await self._add_to_history("user", user_message)
             # 履歴のみ即時保存
             await self._save_conversation_history()
+
+            missing_fields = [
+                key for key in self.required_info
+                if self._is_value_missing(getattr(self.user_profile, key, None))
+            ]
+            await self._extract_missing_information(user_message, missing_fields)
 
             # セッションIDのフォールバック（runを経由しない呼出し対策）
             if not self.current_session:
