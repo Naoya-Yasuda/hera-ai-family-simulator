@@ -121,10 +121,12 @@ class ADKHeraAgent:
 - 必ず最初にextract_user_infoを呼び出すこと
 - ツール実行前に通常のテキスト応答を出力してはならない
 - extract_user_infoのfunction_callを出力した場合は、その直後に必ず最終テキストメッセージを返し、ツールから受け取った文字列をそのまま提示すること
+- ユーザーが写真を提供したらupload_photoツールを呼び出し、保存成功メッセージを受け取った後に会話を継続すること
 - check_session_completionは必要時のみ呼び出す
 
 利用可能なツール：
 - extract_user_info: ユーザー情報を抽出・保存（最初に必ず呼ぶ／戻り値=最終応答）
+- upload_photo: 添付された写真ファイルを保存
 - check_session_completion: 情報収集完了を判定
 
 これらのツールを適切に使用して、ユーザー情報の収集と管理を行ってください。
@@ -143,6 +145,13 @@ class ADKHeraAgent:
             require_confirmation=False
         )
         tools.append(extract_info_tool)
+
+        # 写真アップロードツール
+        upload_photo_tool = FunctionTool(
+            func=self._upload_photo_tool,
+            require_confirmation=False
+        )
+        tools.append(upload_photo_tool)
 
         # セッション完了判定ツール
         completion_tool = FunctionTool(
@@ -712,3 +721,39 @@ class ADKHeraAgent:
         except Exception as e:
             print(f"❌ 写真アップロードエラー: {e}")
             return None
+
+
+    async def _upload_photo_tool(self, *, file_id: str, photo_type: str = "user") -> str:
+        """ADKの添付ファイルを取得して保存するツール"""
+        print(f"⬆️ 写真アップロードツール: file_id={file_id}, type={photo_type}")
+
+        if not file_id:
+            return "ファイルIDが指定されていません"
+
+        try:
+            import httpx
+
+            if not self.current_session:
+                latest_sid = await self._get_latest_adk_session_id(retries=3, timeout_sec=10.0)
+                if not latest_sid:
+                    return "セッションIDが取得できないため写真を保存できません"
+                self.current_session = latest_sid
+
+            endpoint = f"{self.adk_base_url}/apps/agents/users/user/sessions/{self.current_session}/files/{file_id}"
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.get(endpoint)
+                if response.status_code != 200:
+                    print(f"❌ 写真取得失敗: status={response.status_code}, body={response.text}")
+                    return "写真の取得に失敗しました"
+
+                content = response.content
+
+            saved_path = await self._handle_photo_upload(content, photo_type=photo_type)
+            if not saved_path:
+                return "写真の保存に失敗しました"
+
+            return f"写真を保存しました: {saved_path}"
+
+        except Exception as e:
+            print(f"❌ 写真アップロードツールエラー: {e}")
+            return f"写真の保存中にエラーが発生しました: {str(e)}"
