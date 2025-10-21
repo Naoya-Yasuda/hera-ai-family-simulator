@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from typing import Any, Dict, List
 
@@ -22,14 +23,23 @@ class FamilyTool:
         self.model = GenerativeModel(model_name)
         self.display_name = persona.role
 
-        async def call_agent(*, tool_context, input_text: str) -> str:
+        async def call_agent(*, tool_context, input_text: str) -> Dict[str, str]:
             prompt = self._build_prompt(input_text)
 
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(None, self.model.generate_content, prompt)
-            if hasattr(response, "text") and response.text:
-                return response.text.strip()
-            return str(response)
+            text = response.text if hasattr(response, "text") else str(response)
+
+            try:
+                result = json.loads(text)
+                speaker_text = result.get("message", text)
+            except json.JSONDecodeError:
+                speaker_text = text.strip()
+
+            return {
+                "speaker": self.persona.role,
+                "message": speaker_text,
+            }
 
         call_agent.__name__ = f"call_{kind}_{index}"
         self.tool = FunctionTool(func=call_agent, require_confirmation=False)
@@ -47,7 +57,8 @@ class FamilyTool:
 {history_snippets}
 
 ルール:
-- 愛情と感謝を込めて150字以内で応答する
+- 返答は以下のJSON形式で出力してください。
+  {{"message": "ここに150字以内の返答"}}
 - ユーザーの話題に触れ、具体的なエピソードを想像して伝える
 - 他の家族の発言と矛盾しないよう注意する
 - 常に日本語で返答する
