@@ -30,28 +30,52 @@ class FamilyTool:
             response = await loop.run_in_executor(None, self.model.generate_content, prompt)
             text = response.text if hasattr(response, "text") else str(response)
 
+            # デバッグログ
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"[{self.persona.role}] Raw response: {text[:200]}...")
+
             destination = None
             activities: List[str] | None = None
             try:
-                result = json.loads(text)
+                # JSONの前後の余計なテキストを除去
+                text_cleaned = text.strip()
+                # マークダウンコードブロックを除去
+                if text_cleaned.startswith("```json"):
+                    text_cleaned = text_cleaned[7:]
+                if text_cleaned.startswith("```"):
+                    text_cleaned = text_cleaned[3:]
+                if text_cleaned.endswith("```"):
+                    text_cleaned = text_cleaned[:-3]
+                text_cleaned = text_cleaned.strip()
+
+                logger.info(f"[{self.persona.role}] Cleaned JSON: {text_cleaned[:200]}...")
+
+                result = json.loads(text_cleaned)
                 speaker_text = result.get("message", text)
                 destination = result.get("destination")
                 activities_field = result.get("activities")
+
+                logger.info(f"[{self.persona.role}] Parsed - destination: {destination}, activities: {activities_field}")
+
                 if isinstance(activities_field, list):
                     activities = [str(item) for item in activities_field if item]
                 elif activities_field:
                     activities = [str(activities_field)]
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                logger.warning(f"[{self.persona.role}] JSON parse error: {e}, using text as-is")
                 speaker_text = text.strip()
 
             trip_info = tool_context.state.setdefault("family_trip_info", {})
             if destination and isinstance(destination, str):
                 trip_info["destination"] = destination
+                logger.info(f"[{self.persona.role}] Set destination: {destination}")
             if activities:
                 stored = trip_info.setdefault("activities", [])
                 for activity in activities:
                     if activity not in stored:
                         stored.append(activity)
+                logger.info(f"[{self.persona.role}] Added activities: {activities}, total: {stored}")
 
             log = tool_context.state.setdefault("family_conversation_log", [])
             log.append({"speaker": self.persona.role, "message": speaker_text})
