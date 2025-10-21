@@ -190,7 +190,7 @@ class FamilySessionAgent(Agent):
             author=self.name,
             branch=callback_context.branch,
             content=types.Content(
-                role="assistant", parts=[types.Part.from_text(story)]
+                role="assistant", parts=[types.Part(text=story)]
             ),
             actions=EventActions(end_of_agent=True),
         )
