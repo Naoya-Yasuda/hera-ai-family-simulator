@@ -29,9 +29,26 @@ class UserProfile(BaseModel):
     work_style: Optional[str] = Field(None, description="現在の仕事スタイル")
     future_career: Optional[str] = Field(None, description="将来の仕事・キャリア")
     location: Optional[str] = Field(None, description="居住地")
-    partner_info: Optional[Dict[str, Any]] = Field(None, description="パートナー情報")
-    children_info: Optional[List[Dict[str, Any]]] = Field(None, description="子ども情報")
+
+    # パートナー関連（拡張）
+    relationship_status: Optional[str] = Field(
+        None,
+        description="交際状況: 'married'(既婚), 'partnered'(交際中), 'single'(独身), 'other'(その他)"
+    )
+    current_partner: Optional[Dict[str, Any]] = Field(None, description="現在のパートナー情報（既婚/交際中）")
+    ideal_partner: Optional[Dict[str, Any]] = Field(None, description="理想のパートナー像（独身）")
+    partner_info: Optional[Dict[str, Any]] = Field(None, description="パートナー情報（後方互換性用）")
     partner_face_description: Optional[str] = Field(None, description="配偶者の顔の特徴の文章記述")
+
+    # 性格特性（ビッグファイブ）
+    user_personality_traits: Optional[Dict[str, float]] = Field(
+        None,
+        description="ユーザー自身の性格特性（ビッグファイブ: openness, conscientiousness, extraversion, agreeableness, neuroticism）"
+    )
+
+    # 子供関連
+    children_info: Optional[List[Dict[str, Any]]] = Field(None, description="子ども情報")
+
     created_at: Optional[str] = Field(None, description="作成日時")
 
 
@@ -73,7 +90,8 @@ class ADKHeraAgent:
         self.required_info = [
             "age", "gender", "income_range", "lifestyle", "family_structure",
             "interests", "work_style", "future_career", "location",
-            "partner_info", "children_info", "partner_face_description"
+            "relationship_status", "partner_info", "children_info",
+            "partner_face_description", "user_personality_traits"
         ]
 
         # ADKエージェントの初期化（標準的な方法）
@@ -102,18 +120,44 @@ class ADKHeraAgent:
 1. ユーザーから家族についての情報を自然な対話で収集する
 2. 温かみのある、親しみやすい口調で応答する
 3. 以下の情報を収集する：
+
+【基本情報】
    - 名前、年齢、性別
-   - 収入範囲、ライフスタイル
-   - 家族構成、パートナー情報、子ども情報
-   - 趣味・興味、現在の仕事スタイル、将来のキャリア
-   - 居住地
-   - 配偶者の顔の特徴の文章記述
+   - 収入範囲、ライフスタイル、居住地
+   - 家族構成、趣味・興味
+   - 現在の仕事スタイル、将来のキャリア
+
+【パートナー情報】（段階的に収集）
+   ステップ1: まず交際状況を確認
+   - 「現在、結婚されていますか？」または「パートナーはいらっしゃいますか？」
+
+   ステップ2: 状況に応じて分岐
+
+   【既婚/パートナーあり】の場合:
+   - 実際のパートナーについて聞く
+   - 「パートナーの方はどんな性格ですか？」
+   - 性格の特徴（明るい、冷静、優しい、活発、几帳面など）
+   - 趣味や話し方の特徴
+   - 配偶者の顔の特徴を文章で記述してもらう
+
+   【独身】の場合:
+   - 理想のパートナー像を聞く
+   - 「どんな性格の方と一緒になりたいですか？」
+   - 同様の特徴を収集
+
+【ユーザー自身の性格】
+   - 「ご自身の性格を教えてください」
+   - 外向的/内向的、几帳面/おおらか、楽観的/慎重など
+
+【子供の希望】
+   - 希望の人数と性別のみ聞く
+   - 性格は自動計算するため、詳しく聞かない
 
 重要な指示：
 - 将来のキャリアについては、現在の仕事と区別して聞いてください
+- 子供の性格は親の情報から自動計算されるため、子供の性格は聞かないでください
 - 必要な情報が十分に収集されたと判断したら、「もう十分」「これで十分」などと明確に表現してください
 - 常に愛情深く、家族思いの神として振る舞ってください
- - 配偶者の顔特徴を取得する際は、文章で丁寧に聞き出してください
 
 利用方針（厳守）：
 - 必ず最初にextract_user_infoを呼び出すこと
@@ -227,6 +271,8 @@ class ADKHeraAgent:
 現在のプロファイル: {self.user_profile.dict()}
 
 以下のフィールドから該当する情報を抽出してください：
+
+【基本情報】
 - name: 名前（文字列）
 - age: 年齢（数値）
 - gender: 性別（文字列: "男性", "女性", "その他"）
@@ -237,12 +283,62 @@ class ADKHeraAgent:
 - work_style: 現在の仕事スタイル（文字列）
 - future_career: 将来の仕事・キャリア（文字列）
 - location: 居住地（文字列）
-- partner_info: パートナー情報（辞書）
-- children_info: 子ども情報（配列）
-- partner_face_description: 配偶者の顔の方向性・特徴の文章記述（写真がない場合必須）
+
+【パートナー関連】
+- relationship_status: 交際状況（"married", "partnered", "single", "other"）
+
+- current_partner: 現在のパートナー情報（既婚/交際中の場合）
+  {{
+    "name": "名前",
+    "age": 年齢,
+    "personality_traits": {{
+      "openness": 0.0-1.0,        # 好奇心旺盛さ（新しいこと好き）
+      "conscientiousness": 0.0-1.0, # 几帳面さ（計画的）
+      "extraversion": 0.0-1.0,     # 社交性（明るい・活発）
+      "agreeableness": 0.0-1.0,    # 優しさ（思いやり）
+      "neuroticism": 0.0-1.0       # 心配性さ（慎重）
+    }},
+    "temperament": "性格の総合的な説明",
+    "hobbies": ["趣味1", "趣味2"],
+    "speaking_style": "話し方の特徴"
+  }}
+
+- ideal_partner: 理想のパートナー像（独身の場合）
+  # 同様の構造
+
+- user_personality_traits: ユーザー自身の性格特性
+  {{
+    "openness": 0.0-1.0,
+    "conscientiousness": 0.0-1.0,
+    "extraversion": 0.0-1.0,
+    "agreeableness": 0.0-1.0,
+    "neuroticism": 0.0-1.0
+  }}
+
+- partner_info: パートナー情報（後方互換性用・辞書）
+- partner_face_description: 配偶者の顔の特徴の文章記述
+
+【子供関連】
+- children_info: 子供の希望情報（配列）
+  [{{
+    "desired_gender": "男/女",
+    "age": 希望年齢
+  }}]
+  ※性格は親の情報から自動計算されるため、性格情報は含めない
+
+【性格特性の推定ルール】
+会話から以下のキーワードで0.0-1.0の値を推定:
+- 「明るい」「社交的」「外向的」「活発」 → extraversion: 0.7-0.8
+- 「几帳面」「計画的」「責任感」「しっかり」 → conscientiousness: 0.7-0.8
+- 「優しい」「思いやり」「協力的」 → agreeableness: 0.7-0.8
+- 「好奇心旺盛」「創造的」「新しいこと好き」 → openness: 0.7-0.8
+- 「落ち着いている」「楽観的」 → neuroticism: 0.2-0.3
+- 「心配性」「慎重」「不安」 → neuroticism: 0.7-0.8
+- 「内向的」「静か」 → extraversion: 0.2-0.3
+- キーワードがない場合 → 0.5（中立）
 
 抽出できた情報のみをJSON形式で返してください。例：
-{{"age": 38, "gender": "男性", "income_range": "500万", "location": "足立区", "work_style": "エンジニア", "future_career": "フリーランス"}}
+{{"age": 38, "gender": "男性", "relationship_status": "married", "current_partner": {{"personality_traits": {{"extraversion": 0.7, "agreeableness": 0.8}}}}, "user_personality_traits": {{"extraversion": 0.6, "conscientiousness": 0.7}}}}
 """
 
             response = model.generate_content(prompt)
